@@ -4,9 +4,18 @@ import './global.css';
 import { Providers } from './providers';
 
 const LOGO_URL = 'https://raw.createusercontent.com/ef83fbea-b45f-4d4d-8f71-c23d5eb0a565/';
+const APP_URL =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  process.env.NEXT_PUBLIC_CREATE_APP_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : 'http://localhost:4000');
 
 export const metadata: Metadata = {
-  title: 'Risk Whisperer — Mantle RWA AI Agent',
+  metadataBase: new URL(APP_URL),
+  title: 'Risk Whisperer - Mantle RWA AI Agent',
   description:
     'Autonomous RWA risk manager powered by AI. Monitor mETH and USDY in real-time with transparent recommendation logs.',
   icons: {
@@ -14,25 +23,27 @@ export const metadata: Metadata = {
     apple: LOGO_URL,
   },
   openGraph: {
-    title: 'Risk Whisperer — Mantle RWA AI Agent',
+    title: 'Risk Whisperer - Mantle RWA AI Agent',
     description:
-      'Autonomous RWA risk manager. Monitor mETH and USDY in real-time with transparent recommendation logs.',
+      'AI x RWA - dynamic yield strategies and automated risk management for USDY and mETH on Mantle.',
+    url: APP_URL,
+    siteName: 'Risk Whisperer',
     images: [
       {
-        url: LOGO_URL,
+        url: '/opengraph-image',
         width: 1200,
         height: 630,
-        alt: 'Risk Whisperer Logo',
+        alt: 'Risk Whisperer - AI x RWA on Mantle',
       },
     ],
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Risk Whisperer — Mantle RWA AI Agent',
+    title: 'Risk Whisperer - Mantle RWA AI Agent',
     description:
-      'Autonomous RWA risk manager. Monitor mETH and USDY in real-time with transparent recommendation logs.',
-    images: [LOGO_URL],
+      'AI x RWA - dynamic yield strategies and automated risk management for USDY and mETH on Mantle.',
+    images: ['/opengraph-image'],
   },
 };
 
