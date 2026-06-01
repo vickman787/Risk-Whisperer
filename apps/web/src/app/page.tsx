@@ -22,6 +22,7 @@ import {
 
 const LOGO_URL = 'https://raw.createusercontent.com/ef83fbea-b45f-4d4d-8f71-c23d5eb0a565/';
 const TABS = ['Overview', 'Risk Log', 'Assets', 'Agent Identity'];
+const THEME_STORAGE_KEY = 'risk-whisperer-theme';
 const MANTLE_CHAIN_ID = '0x1388';
 const MANTLE_CHAIN_PARAMS = {
   chainId: MANTLE_CHAIN_ID,
@@ -213,7 +214,19 @@ export default function RiskWhisperer() {
 
   useEffect(() => {
     setTodayStr(new Date().toISOString().slice(0, 10));
+
+    const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (savedTheme === 'dark') setDark(true);
+    if (savedTheme === 'light') setDark(false);
   }, []);
+
+  function toggleTheme() {
+    setDark((current) => {
+      const next = !current;
+      window.localStorage.setItem(THEME_STORAGE_KEY, next ? 'dark' : 'light');
+      return next;
+    });
+  }
 
   useEffect(() => {
     const ethereum = window.ethereum;
@@ -436,7 +449,7 @@ export default function RiskWhisperer() {
               )}
             </button>
             <button
-              onClick={() => setDark(!dark)}
+              onClick={toggleTheme}
               className={`w-8 h-8 rounded-full flex items-center justify-center border transition-colors duration-150 ${dark ? 'bg-[#262626] border-gray-700 text-gray-300 hover:bg-gray-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
               aria-label="Toggle dark mode"
             >
