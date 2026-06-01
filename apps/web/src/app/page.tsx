@@ -24,6 +24,7 @@ import {
 const LOGO_URL = 'https://raw.createusercontent.com/ef83fbea-b45f-4d4d-8f71-c23d5eb0a565/';
 const TABS = ['Overview', 'Risk Log', 'Assets', 'Agent Identity'];
 const THEME_STORAGE_KEY = 'risk-whisperer-theme';
+const OWNER_STORAGE_KEY = 'risk-whisperer-owner-key';
 const MANTLE_CHAIN_ID = '0x1388';
 const MANTLE_CHAIN_PARAMS = {
   chainId: MANTLE_CHAIN_ID,
@@ -100,6 +101,19 @@ function fmtTime(iso: string): string {
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function getVisitorOwnerKey(): string {
+  const saved = window.localStorage.getItem(OWNER_STORAGE_KEY);
+  if (saved) return saved;
+
+  const randomId =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const ownerKey = `anon:${randomId}`;
+  window.localStorage.setItem(OWNER_STORAGE_KEY, ownerKey);
+  return ownerKey;
 }
 
 function encodeBalanceOf(address: string): string {
@@ -198,8 +212,33 @@ interface Decision {
   risk_after: number;
   confidence: number;
   status: string;
+  market_snapshot?: DecisionSnapshot;
   created_at: string;
 }
+
+type DecisionSnapshot = {
+  market?: MarketData;
+  research?: {
+    generatedAt?: string;
+    objective?: string;
+    sources?: ResearchSource[];
+    riskHypotheses?: string[];
+    opportunityHypotheses?: string[];
+  };
+  ai?: {
+    research_brief?: string;
+    key_findings?: string[];
+    sources_used?: string[];
+  };
+};
+
+type ResearchSource = {
+  label: string;
+  category: string;
+  url: string;
+  summary: string;
+  signal: string;
+};
 
 interface Portfolio {
   meth_allocation: number;
@@ -334,11 +373,13 @@ export default function RiskWhisperer() {
   const [walletError, setWalletError] = useState<string | null>(null);
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
   const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
+  const [ownerKey, setOwnerKey] = useState('');
   const [todayStr, setTodayStr] = useState('');
   const qc = useQueryClient();
 
   useEffect(() => {
     setTodayStr(new Date().toISOString().slice(0, 10));
+    setOwnerKey(getVisitorOwnerKey());
 
     const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (savedTheme === 'dark') setDark(true);
@@ -442,9 +483,12 @@ export default function RiskWhisperer() {
   }
 
   const { data: decisionsData, isLoading: decisionsLoading } = useQuery({
-    queryKey: ['decisions'],
+    queryKey: ['decisions', ownerKey],
+    enabled: Boolean(ownerKey),
     queryFn: async () => {
-      const res = await fetch('/api/decisions');
+      const res = await fetch('/api/decisions', {
+        headers: { 'x-risk-owner-key': ownerKey },
+      });
       if (!res.ok) throw new Error('Failed to fetch decisions');
       return res.json() as Promise<{ decisions: Decision[]; portfolio: Portfolio }>;
     },
@@ -494,7 +538,10 @@ export default function RiskWhisperer() {
   const { mutate: runAgent, isPending: agentRunning } = useMutation({
     mutationFn: async () => {
       setAgentError(null);
-      const res = await fetch('/api/agent/run', { method: 'POST' });
+      const res = await fetch('/api/agent/run', {
+        method: 'POST',
+        headers: { 'x-risk-owner-key': ownerKey },
+      });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error ?? 'Agent run failed');
@@ -502,7 +549,7 @@ export default function RiskWhisperer() {
       return res.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['decisions'] });
+      qc.invalidateQueries({ queryKey: ['decisions', ownerKey] });
       qc.invalidateQueries({ queryKey: ['market'] });
     },
     onError: (err: Error) => setAgentError(err.message),
@@ -511,7 +558,10 @@ export default function RiskWhisperer() {
   const { mutate: deleteDecision, isPending: decisionDeleting, variables: deletingDecisionId } =
     useMutation({
       mutationFn: async (id: number) => {
-        const res = await fetch(`/api/decisions?id=${id}`, { method: 'DELETE' });
+        const res = await fetch(`/api/decisions?id=${id}`, {
+          method: 'DELETE',
+          headers: { 'x-risk-owner-key': ownerKey },
+        });
         if (!res.ok) {
           const err = await res.json();
           throw new Error(err.error ?? 'Failed to delete decision');
@@ -520,7 +570,7 @@ export default function RiskWhisperer() {
       },
       onSuccess: (_data, id) => {
         if (expandedLog === String(id)) setExpandedLog(null);
-        qc.invalidateQueries({ queryKey: ['decisions'] });
+        qc.invalidateQueries({ queryKey: ['decisions', ownerKey] });
       },
       onError: (err: Error) => setAgentError(err.message),
     });
@@ -631,8 +681,12 @@ export default function RiskWhisperer() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => runAgent()}
-              disabled={agentRunning}
-              className={`inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-colors duration-150 ${agentRunning ? 'bg-blue-400 text-white cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+              disabled={agentRunning || !ownerKey}
+              className={`inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-colors duration-150 ${
+                agentRunning || !ownerKey
+                  ? 'bg-blue-400 text-white cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+              }`}
             >
               {agentRunning ? (
                 <>
@@ -1067,6 +1121,9 @@ export default function RiskWhisperer() {
             ) : (
               decisions.map((entry) => {
                 const key = String(entry.id);
+                const snapshot = entry.market_snapshot;
+                const aiResearch = snapshot?.ai;
+                const researchSources = snapshot?.research?.sources ?? [];
                 return (
                   <div
                     key={entry.id}
@@ -1235,6 +1292,66 @@ export default function RiskWhisperer() {
                             </p>
                           </div>
                         </div>
+                        {(aiResearch?.research_brief || researchSources.length > 0) && (
+                          <div className={`mt-5 border-t ${innerDivider} pt-5`}>
+                            <div className="flex items-center justify-between gap-4 mb-4">
+                              <div>
+                                <p className={`text-xs font-medium ${sub}`}>Autonomous Research</p>
+                                <p className={`text-sm ${heading} font-medium mt-1`}>
+                                  Evidence trail used before the recommendation
+                                </p>
+                              </div>
+                              <span className={`border rounded-full px-3 py-1 text-xs ${pillBg}`}>
+                                {researchSources.length} sources
+                              </span>
+                            </div>
+
+                            {aiResearch?.research_brief && (
+                              <p
+                                className={`text-sm ${dark ? 'text-gray-300' : 'text-gray-600'} leading-relaxed mb-4`}
+                              >
+                                {aiResearch.research_brief}
+                              </p>
+                            )}
+
+                            {Boolean(aiResearch?.key_findings?.length) && (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                                {aiResearch?.key_findings?.map((finding) => (
+                                  <div
+                                    key={finding}
+                                    className={`rounded-xl border ${signalCard} p-3 text-sm ${
+                                      dark ? 'text-gray-300' : 'text-gray-600'
+                                    }`}
+                                  >
+                                    {finding}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {researchSources.map((source) => (
+                                <div key={source.label} className={`rounded-xl border ${signalCard} p-3`}>
+                                  <div className="flex items-center justify-between gap-3 mb-2">
+                                    <p className={`text-sm font-medium ${heading}`}>{source.label}</p>
+                                    <span className={`text-xs ${sub}`}>{source.signal}</span>
+                                  </div>
+                                  <p className={`text-xs ${sub} leading-relaxed`}>{source.summary}</p>
+                                  {source.url.startsWith('http') && (
+                                    <a
+                                      href={source.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="mt-2 inline-flex text-xs text-blue-500 hover:text-blue-600"
+                                    >
+                                      View source
+                                    </a>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

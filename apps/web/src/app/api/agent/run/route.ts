@@ -1,4 +1,49 @@
 import sql from '@/app/api/utils/sql';
+import { ensureOwnerColumns, getOrCreatePortfolio, getOwnerKey } from '@/app/api/utils/owner';
+
+type MarketSnapshot = {
+  ethPrice: number;
+  ethChange: number;
+  methPrice: number;
+  usdyPrice: number;
+  usdyChange: number;
+  usdyPegDeviation: number;
+  mantleTvlChange: number;
+  sentimentScore: number;
+  sentimentLabel: string;
+  fundingRate: number;
+  fetchedAt: string;
+};
+
+type PortfolioState = {
+  id?: number;
+  meth_allocation: number;
+  usdy_allocation: number;
+  total_value_usd: number;
+};
+
+type ResearchSource = {
+  label: string;
+  category: 'Price' | 'Peg' | 'Liquidity' | 'Sentiment' | 'Leverage' | 'Portfolio';
+  url: string;
+  summary: string;
+  signal: 'Bullish' | 'Bearish' | 'Neutral' | 'Risk';
+};
+
+type AgentDecision = {
+  trigger: string;
+  action: string;
+  from_asset: string | null;
+  to_asset: string | null;
+  amount: string | null;
+  reallocation_pct: number;
+  risk_score: number;
+  confidence: number;
+  research_brief?: string;
+  key_findings?: string[];
+  sources_used?: string[];
+  reasoning: string;
+};
 
 function generateTxHash(): string {
   const hex = '0123456789abcdef';
@@ -6,30 +51,99 @@ function generateTxHash(): string {
   return `0x${full.slice(0, 4)}...${full.slice(6)}`;
 }
 
+function formatPct(value: number): string {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
+}
+
+function buildResearchDossier(
+  market: MarketSnapshot,
+  portfolio: PortfolioState,
+  recentContext: string
+) {
+  const usdyPegBps = market.usdyPegDeviation * 10_000;
+  const sources: ResearchSource[] = [
+    {
+      label: 'DeFiLlama token prices',
+      category: 'Price',
+      url: 'https://coins.llama.fi/prices/current/coingecko:ethereum,mantle:0xcDA86A272531e8640cD7F1a92c01839911B90bb0,mantle:0x5bE26527e817998A7206475496fDE1E68957c5A6',
+      summary: `ETH is $${market.ethPrice.toLocaleString()} (${formatPct(market.ethChange)} 24h), mETH is $${market.methPrice.toLocaleString()}, and USDY is $${market.usdyPrice.toFixed(4)}.`,
+      signal: market.ethChange > 2 ? 'Bullish' : market.ethChange < -2 ? 'Bearish' : 'Neutral',
+    },
+    {
+      label: 'USDY peg monitor',
+      category: 'Peg',
+      url: 'https://coins.llama.fi/prices/current/mantle:0x5bE26527e817998A7206475496fDE1E68957c5A6',
+      summary: `USDY is ${usdyPegBps.toFixed(1)} bps away from $1.00; emergency hold threshold is 50 bps.`,
+      signal: market.usdyPegDeviation > 0.005 ? 'Risk' : 'Neutral',
+    },
+    {
+      label: 'DeFiLlama Mantle TVL',
+      category: 'Liquidity',
+      url: 'https://api.llama.fi/v2/chains',
+      summary: `Mantle TVL changed ${formatPct(market.mantleTvlChange)} over 24h, a proxy for chain liquidity pressure.`,
+      signal:
+        market.mantleTvlChange > 1 ? 'Bullish' : market.mantleTvlChange < -1 ? 'Bearish' : 'Neutral',
+    },
+    {
+      label: 'Alternative.me Fear and Greed',
+      category: 'Sentiment',
+      url: 'https://api.alternative.me/fng/?limit=1',
+      summary: `Crypto sentiment is ${market.sentimentLabel} (${Math.round((market.sentimentScore + 1) * 50)}/100).`,
+      signal:
+        market.sentimentScore > 0.25
+          ? 'Bullish'
+          : market.sentimentScore < -0.25
+            ? 'Bearish'
+            : 'Neutral',
+    },
+    {
+      label: 'Binance ETH perpetual funding',
+      category: 'Leverage',
+      url: 'https://fapi.binance.com/fapi/v1/fundingRate?symbol=ETHUSDT&limit=1',
+      summary: `ETH perpetual funding is ${formatPct(market.fundingRate)}, showing current long/short leverage pressure.`,
+      signal: market.fundingRate > 0.03 ? 'Risk' : market.fundingRate < -0.01 ? 'Bearish' : 'Neutral',
+    },
+    {
+      label: 'Portfolio constraints and memory',
+      category: 'Portfolio',
+      url: 'internal://portfolio-state-and-recent-decisions',
+      summary: `Portfolio is ${portfolio.meth_allocation}% mETH and ${portfolio.usdy_allocation}% USDY. Recent memory: ${recentContext}`,
+      signal: 'Neutral',
+    },
+  ];
+
+  const risks = sources.filter((source) => source.signal === 'Risk' || source.signal === 'Bearish');
+  const opportunities = sources.filter((source) => source.signal === 'Bullish');
+
+  return {
+    generatedAt: new Date().toISOString(),
+    objective:
+      'Autonomously research Mantle RWA portfolio risk before making a bounded allocation recommendation.',
+    sources,
+    riskHypotheses: risks.map((source) => `${source.category}: ${source.summary}`),
+    opportunityHypotheses: opportunities.map((source) => `${source.category}: ${source.summary}`),
+  };
+}
+
 export async function POST(request: Request) {
   try {
-    // 1. Fetch live market data
+    await ensureOwnerColumns();
+    const ownerKey = await getOwnerKey(request);
     const baseUrl = process.env.NEXT_PUBLIC_CREATE_APP_URL ?? new URL(request.url).origin;
     const marketRes = await fetch(`${baseUrl}/api/market-data`);
     if (!marketRes.ok) throw new Error('Failed to fetch market data');
-    const market = await marketRes.json();
+    const market = (await marketRes.json()) as MarketSnapshot;
 
     if (!process.env.OPENROUTER_API_KEY) {
       throw new Error('OPENROUTER_API_KEY is not set');
     }
 
-    // 2. Get current portfolio state
-    const portfolioRows = await sql`SELECT * FROM portfolio_state ORDER BY id DESC LIMIT 1`;
-    const portfolio = portfolioRows[0] ?? {
-      meth_allocation: 0,
-      usdy_allocation: 0,
-      total_value_usd: 0,
-    };
+    const portfolio = (await getOrCreatePortfolio(ownerKey)) as PortfolioState;
 
-    // 3. Get last 3 decisions for context
     const recentDecisions = await sql`
       SELECT action, reasoning, risk_after, created_at
       FROM decisions
+      WHERE owner_key = ${ownerKey}
       ORDER BY created_at DESC
       LIMIT 3
     `;
@@ -44,10 +158,24 @@ export async function POST(request: Request) {
             .join('\n')
         : 'No previous decisions yet.';
 
-    // 4. Build the AI prompt
-    const systemPrompt = `You are Risk Whisperer — an autonomous AI risk manager for a DeFi portfolio focused on Mantle RWA assets. You manage two assets:
+    const researchDossier = buildResearchDossier(market, portfolio, recentContext);
+    const researchContext = researchDossier.sources
+      .map(
+        (source, index) =>
+          `${index + 1}. ${source.label} [${source.category}, ${source.signal}]\n   URL: ${source.url}\n   Finding: ${source.summary}`
+      )
+      .join('\n');
+
+    const systemPrompt = `You are Risk Whisperer - an autonomous AI research agent and risk manager for a DeFi portfolio focused on Mantle RWA assets. You manage two assets:
 - mETH (Mantle Staked Ether): currently ${portfolio.meth_allocation}% of portfolio. Medium risk, reference yield ~4.8% APY.
 - USDY (Ondo US Dollar Yield): currently ${portfolio.usdy_allocation}% of portfolio. Low risk, reference yield ~5.1% APY. Backed by US Treasuries.
+
+Your operating loop:
+1. Inspect every supplied source and separate evidence from speculation.
+2. Form risk and opportunity hypotheses.
+3. Check portfolio constraints and cooldown memory.
+4. Decide only when the evidence clears the confidence threshold.
+5. Produce an auditable research trail with source names.
 
 Your rules:
 - mETH must stay between 40% and 75%
@@ -68,29 +196,25 @@ You must output ONLY valid JSON in this exact format, no extra text:
   "reallocation_pct": number between 0 and 15 (percentage of portfolio to move, 0 if Hold),
   "risk_score": number between 1 and 100,
   "confidence": number between 50 and 99,
-  "reasoning": "2-3 sentences explaining the decision with specific data points from the market signals"
+  "research_brief": "2-4 sentences summarizing the independent evidence review",
+  "key_findings": ["3-5 concise evidence-backed findings"],
+  "sources_used": ["source labels that directly influenced the decision"],
+  "reasoning": "2-3 sentences explaining the portfolio decision with specific evidence from the research brief"
 }`;
 
-    const userPrompt = `Current market signals:
-- ETH Price: $${market.ethPrice} (${market.ethChange > 0 ? '+' : ''}${market.ethChange}% 24h)
-- mETH Price: $${market.methPrice}
-- USDY Price: $${market.usdyPrice} (peg deviation: ${market.usdyPegDeviation}%)
-- USDY 24h change: ${market.usdyChange}%
-- ETH Funding Rate: ${market.fundingRate > 0 ? '+' : ''}${market.fundingRate}%
-- Crypto Fear & Greed: ${market.sentimentScore} (${market.sentimentLabel}, raw: ${Math.round((market.sentimentScore + 1) * 50)}/100)
-- Mantle TVL 24h change: ${market.mantleTvlChange > 0 ? '+' : ''}${market.mantleTvlChange}%
+    const userPrompt = `Research dossier:
+${researchContext}
 
 Current portfolio:
-- mETH: ${portfolio.meth_allocation}% 
+- mETH: ${portfolio.meth_allocation}%
 - USDY: ${portfolio.usdy_allocation}%
 - Total value: $${portfolio.total_value_usd}
 
 Recent decisions (for cooldown context):
 ${recentContext}
 
-Analyse the market signals and decide what to do. Output only the JSON.`;
+Autonomously research the evidence, then decide what to do. Output only the JSON.`;
 
-    // 5. Call OpenRouter
     const openRouterRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -105,8 +229,8 @@ Analyse the market signals and decide what to do. Output only the JSON.`;
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        temperature: 0.3,
-        max_tokens: 512,
+        temperature: 0.2,
+        max_tokens: 900,
       }),
     });
 
@@ -118,21 +242,9 @@ Analyse the market signals and decide what to do. Output only the JSON.`;
     const openRouterData = await openRouterRes.json();
     const rawContent = openRouterData.choices?.[0]?.message?.content ?? '';
 
-    // 6. Parse AI response
-    let decision: {
-      trigger: string;
-      action: string;
-      from_asset: string | null;
-      to_asset: string | null;
-      amount: string | null;
-      reallocation_pct: number;
-      risk_score: number;
-      confidence: number;
-      reasoning: string;
-    };
+    let decision: AgentDecision;
 
     try {
-      // Extract JSON even if there's extra text
       const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error('No JSON found in AI response');
       decision = JSON.parse(jsonMatch[0]);
@@ -140,7 +252,6 @@ Analyse the market signals and decide what to do. Output only the JSON.`;
       throw new Error(`Failed to parse AI response: ${rawContent}`);
     }
 
-    // 7. Apply reallocation to portfolio state
     let newMeth = portfolio.meth_allocation;
     let newUsdy = portfolio.usdy_allocation;
 
@@ -163,15 +274,15 @@ Analyse the market signals and decide what to do. Output only the JSON.`;
             Math.max(1, decision.risk_score + (decision.from_asset === 'mETH' ? -5 : 5))
           );
     const riskAfter = decision.risk_score;
-
-    // 8. Save decision to DB
     const txHash = generateTxHash();
+
     const [saved] = await sql`
       INSERT INTO decisions (
-        tx_hash, trigger_type, reasoning, action,
+        owner_key, tx_hash, trigger_type, reasoning, action,
         from_asset, to_asset, amount,
         risk_before, risk_after, confidence, status, market_snapshot
       ) VALUES (
+        ${ownerKey},
         ${txHash},
         ${decision.trigger},
         ${decision.reasoning},
@@ -183,23 +294,31 @@ Analyse the market signals and decide what to do. Output only the JSON.`;
         ${riskAfter},
         ${decision.confidence},
         ${decision.confidence >= 70 ? 'Recommended' : 'Skipped'},
-        ${JSON.stringify(market)}
+        ${JSON.stringify({
+          market,
+          research: researchDossier,
+          ai: {
+            research_brief: decision.research_brief ?? '',
+            key_findings: decision.key_findings ?? [],
+            sources_used: decision.sources_used ?? [],
+          },
+        })}
       )
       RETURNING *
     `;
 
-    // 9. Update the model portfolio if the recommendation clears the threshold
-    if (decision.confidence >= 70 && decision.action !== 'Hold') {
+    if (decision.confidence >= 70 && decision.action !== 'Hold' && portfolio.id) {
       await sql`
         UPDATE portfolio_state
         SET meth_allocation = ${newMeth},
             usdy_allocation = ${newUsdy},
             updated_at = NOW()
         WHERE id = ${portfolio.id}
+          AND owner_key = ${ownerKey}
       `;
     }
 
-    return Response.json({ success: true, decision: saved, market });
+    return Response.json({ success: true, decision: saved, market, research: researchDossier });
   } catch (err) {
     console.error('agent/run error:', err);
     return Response.json(

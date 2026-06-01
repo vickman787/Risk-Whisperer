@@ -1,35 +1,37 @@
 import sql from '@/app/api/utils/sql';
+import { ensureOwnerColumns, getOrCreatePortfolio, getOwnerKey } from '@/app/api/utils/owner';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    await ensureOwnerColumns();
+    const ownerKey = await getOwnerKey(request);
+
     const decisions = await sql`
       SELECT * FROM decisions
+      WHERE owner_key = ${ownerKey}
       ORDER BY created_at DESC
       LIMIT 20
     `;
 
-    const portfolio = await sql`
-      SELECT * FROM portfolio_state
-      ORDER BY id DESC
-      LIMIT 1
-    `;
+    const portfolio = await getOrCreatePortfolio(ownerKey);
 
     return Response.json({
       decisions,
-      portfolio: portfolio[0] ?? {
-        meth_allocation: 0,
-        usdy_allocation: 0,
-        total_value_usd: 0,
-      },
+      portfolio,
     });
   } catch (err) {
     console.error('decisions GET error:', err);
-    return Response.json({ error: 'Failed to fetch decisions' }, { status: 500 });
+    return Response.json(
+      { error: err instanceof Error ? err.message : 'Failed to fetch decisions' },
+      { status: 500 }
+    );
   }
 }
 
 export async function DELETE(request: Request) {
   try {
+    await ensureOwnerColumns();
+    const ownerKey = await getOwnerKey(request);
     const { searchParams } = new URL(request.url);
     const id = Number(searchParams.get('id'));
 
@@ -40,6 +42,7 @@ export async function DELETE(request: Request) {
     const deleted = await sql`
       DELETE FROM decisions
       WHERE id = ${id}
+        AND owner_key = ${ownerKey}
       RETURNING id
     `;
 

@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS portfolio_state (
   id SERIAL PRIMARY KEY,
+  owner_key TEXT NOT NULL DEFAULT 'legacy:global',
   meth_allocation NUMERIC NOT NULL DEFAULT 0,
   usdy_allocation NUMERIC NOT NULL DEFAULT 0,
   total_value_usd NUMERIC NOT NULL DEFAULT 0,
@@ -8,6 +9,7 @@ CREATE TABLE IF NOT EXISTS portfolio_state (
 
 CREATE TABLE IF NOT EXISTS decisions (
   id SERIAL PRIMARY KEY,
+  owner_key TEXT NOT NULL DEFAULT 'legacy:global',
   tx_hash TEXT NOT NULL,
   trigger_type TEXT NOT NULL,
   reasoning TEXT NOT NULL,
@@ -23,6 +25,5 @@ CREATE TABLE IF NOT EXISTS decisions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO portfolio_state (meth_allocation, usdy_allocation, total_value_usd)
-SELECT 0, 0, 0
-WHERE NOT EXISTS (SELECT 1 FROM portfolio_state);
+CREATE INDEX IF NOT EXISTS decisions_owner_created_idx ON decisions (owner_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS portfolio_state_owner_updated_idx ON portfolio_state (owner_key, updated_at DESC);
