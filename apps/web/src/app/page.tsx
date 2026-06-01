@@ -18,6 +18,7 @@ import {
   Moon,
   Play,
   RefreshCw,
+  Globe2,
 } from 'lucide-react';
 
 const LOGO_URL = 'https://raw.createusercontent.com/ef83fbea-b45f-4d4d-8f71-c23d5eb0a565/';
@@ -48,7 +49,6 @@ type EthereumProvider = {
 type WalletOption = {
   id: string;
   name: string;
-  logo: string;
   provider?: EthereumProvider;
 };
 
@@ -89,18 +89,46 @@ function shortAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-function walletLogoClass(id: string): string {
-  if (id === 'metamask') return 'bg-orange-500 text-white';
-  if (id === 'rabby') return 'bg-blue-500 text-white';
-  return 'bg-gray-700 text-white';
+function WalletLogo({ id }: { id: string }) {
+  if (id === 'metamask') {
+    return (
+      <svg viewBox="0 0 32 32" className="w-7 h-7" aria-hidden="true">
+        <path fill="#F6851B" d="M4 5l9 7-2 4-6-2z" />
+        <path fill="#E2761B" d="M28 5l-9 7 2 4 6-2z" />
+        <path fill="#F6851B" d="M11 17l-3 9 6-3 2-5z" />
+        <path fill="#E2761B" d="M21 17l3 9-6-3-2-5z" />
+        <path fill="#763D16" d="M13 12h6l2 5-5 2-5-2z" />
+        <path fill="#FBB03B" d="M8 14l5 3-2 3-4-1zM24 14l-5 3 2 3 4-1z" />
+        <path fill="#111827" d="M11 19l3 1-2 2zM21 19l-3 1 2 2z" />
+        <path fill="#C0AD9E" d="M14 23h4l-2 2z" />
+      </svg>
+    );
+  }
+
+  if (id === 'rabby') {
+    return (
+      <svg viewBox="0 0 32 32" className="w-7 h-7" aria-hidden="true">
+        <circle cx="16" cy="16" r="13" fill="#6F7DFB" />
+        <path
+          fill="#FFFFFF"
+          d="M11 12c-1-3 1-6 3-3l2 3 2-3c2-3 4 0 3 3 3 1 5 4 3 7-1 3-4 5-8 5s-7-2-8-5c-2-3 0-6 3-7z"
+        />
+        <path fill="#DDE3FF" d="M10 18c3-2 7-2 12 0-1 2-3 4-6 4s-5-2-6-4z" />
+        <circle cx="13" cy="15" r="1" fill="#4250C8" />
+        <circle cx="19" cy="15" r="1" fill="#4250C8" />
+      </svg>
+    );
+  }
+
+  return <Globe2 size={20} className="text-green-400" />;
 }
 
 function getWalletOptions(): WalletOption[] {
   if (typeof window === 'undefined' || !window.ethereum) {
     return [
-      { id: 'metamask', name: 'MetaMask', logo: 'M' },
-      { id: 'rabby', name: 'Rabby', logo: 'R' },
-      { id: 'injected', name: 'Injected', logo: 'I' },
+      { id: 'metamask', name: 'MetaMask' },
+      { id: 'rabby', name: 'Rabby Wallet' },
+      { id: 'injected', name: 'Injected' },
     ];
   }
 
@@ -110,9 +138,9 @@ function getWalletOptions(): WalletOption[] {
   const injected = window.ethereum;
 
   return [
-    { id: 'metamask', name: 'MetaMask', logo: 'M', provider: metamask },
-    { id: 'rabby', name: 'Rabby', logo: 'R', provider: rabby },
-    { id: 'injected', name: 'Injected', logo: 'I', provider: injected },
+    { id: 'metamask', name: 'MetaMask', provider: metamask },
+    { id: 'rabby', name: 'Rabby Wallet', provider: rabby },
+    { id: 'injected', name: 'Injected', provider: injected },
   ];
 }
 
@@ -534,8 +562,8 @@ export default function RiskWhisperer() {
                           onClick={() => connectWallet(option)}
                           className={`w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${dark ? 'hover:bg-gray-800 text-gray-200' : 'hover:bg-gray-50 text-gray-800'}`}
                         >
-                          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${walletLogoClass(option.id)}`}>
-                            {option.logo}
+                          <span className="w-9 h-9 rounded-xl border border-green-600 bg-[#071407] flex items-center justify-center overflow-hidden shadow-[0_0_0_1px_rgba(34,197,94,0.18)]">
+                            <WalletLogo id={option.id} />
                           </span>
                           <span>{option.name}</span>
                           {!option.provider && (
