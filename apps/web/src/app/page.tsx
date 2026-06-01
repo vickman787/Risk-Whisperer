@@ -1,0 +1,1125 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  ShieldCheck,
+  Activity,
+  TrendingUp,
+  Zap,
+  Clock,
+  ChevronRight,
+  ExternalLink,
+  Wallet,
+  BarChart3,
+  Eye,
+  ArrowRightLeft,
+  Sun,
+  Moon,
+  Play,
+  RefreshCw,
+} from 'lucide-react';
+
+const LOGO_URL = 'https://raw.createusercontent.com/ef83fbea-b45f-4d4d-8f71-c23d5eb0a565/';
+const TABS = ['Overview', 'Risk Log', 'Assets', 'Agent Identity'];
+
+// Pure ISO string formatters — no new Date() so no hydration mismatch
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function fmtDate(iso: string): string {
+  const [datePart, timePart = ''] = iso.split('T');
+  const parts = datePart.split('-');
+  const year = parts[0] ?? '';
+  const month = parseInt(parts[1] ?? '1', 10);
+  const day = parseInt(parts[2] ?? '1', 10);
+  const timeParts = timePart.split(':');
+  const hour = parseInt(timeParts[0] ?? '0', 10);
+  const minute = timeParts[1] ?? '00';
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  const hour12 = hour % 12 || 12;
+  return `${MONTHS[month - 1]} ${day}, ${year}, ${hour12}:${minute} ${ampm}`;
+}
+
+function fmtTime(iso: string): string {
+  const timePart = iso.split('T')[1] ?? '';
+  const timeParts = timePart.split(':');
+  const hour = parseInt(timeParts[0] ?? '0', 10);
+  const minute = timeParts[1] ?? '00';
+  const ampm = hour >= 12 ? 'PM' : 'AM';
+  const hour12 = hour % 12 || 12;
+  return `${hour12}:${minute} ${ampm}`;
+}
+
+interface Decision {
+  id: number;
+  tx_hash: string;
+  trigger_type: string;
+  reasoning: string;
+  action: string;
+  from_asset: string;
+  to_asset: string;
+  amount: string;
+  risk_before: number;
+  risk_after: number;
+  confidence: number;
+  status: string;
+  created_at: string;
+}
+
+interface Portfolio {
+  meth_allocation: number;
+  usdy_allocation: number;
+  total_value_usd: number;
+}
+
+interface MarketData {
+  ethPrice: number;
+  ethChange: number;
+  methPrice: number;
+  usdyPrice: number;
+  usdyChange: number;
+  usdyPegDeviation: number;
+  mantleTvlChange: number;
+  sentimentScore: number;
+  sentimentLabel: string;
+  fundingRate: number;
+  fetchedAt: string;
+}
+
+function RingChart({
+  value,
+  color = '#EA580C',
+  size = 80,
+  dark = false,
+}: {
+  value: number;
+  color?: string;
+  size?: number;
+  dark?: boolean;
+}) {
+  const radius = (size - 10) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (value / 100) * circumference;
+  return (
+    <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke={dark ? '#374151' : '#F3F4F6'}
+        strokeWidth={6}
+      />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke={color}
+        strokeWidth={6}
+        strokeDasharray={circumference}
+        strokeDashoffset={strokeDashoffset}
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function StatusPill({ status, dark }: { status: string; dark: boolean }) {
+  const dot =
+    status === 'Executed' ? 'bg-green-500' : status === 'Skipped' ? 'bg-gray-400' : 'bg-yellow-500';
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 border rounded-full px-3 py-1 text-xs ${dark ? 'bg-[#262626] border-gray-700 text-gray-300' : 'bg-white border-gray-200 text-gray-700'}`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${dot}`} /> {status}
+    </span>
+  );
+}
+
+function ActionPill({ action, dark }: { action: string; dark: boolean }) {
+  const light: Record<string, string> = {
+    Reallocate: 'bg-blue-50 text-blue-600',
+    Reduce: 'bg-red-50 text-red-600',
+    Increase: 'bg-green-50 text-green-600',
+    Hold: 'bg-gray-100 text-gray-500',
+  };
+  const dk: Record<string, string> = {
+    Reallocate: 'bg-blue-950 text-blue-400',
+    Reduce: 'bg-red-950 text-red-400',
+    Increase: 'bg-green-950 text-green-400',
+    Hold: 'bg-gray-800 text-gray-400',
+  };
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${(dark ? dk : light)[action] ?? 'bg-gray-100 text-gray-500'}`}
+    >
+      {action}
+    </span>
+  );
+}
+
+function TriggerPill({ trigger, dark }: { trigger: string; dark: boolean }) {
+  return (
+    <span
+      className={`border rounded-full px-3 py-1 text-xs inline-flex items-center gap-1.5 ${dark ? 'bg-[#262626] border-gray-700 text-gray-300' : 'bg-white border-gray-200 text-gray-700'}`}
+    >
+      {trigger === 'News Signal' && <Zap size={10} className="text-blue-500" />}
+      {trigger === 'On-chain Anomaly' && <Activity size={10} className="text-orange-500" />}
+      {trigger === 'Market Scan' && <BarChart3 size={10} className="text-purple-500" />}
+      {trigger === 'Sentiment Alert' && <Eye size={10} className="text-gray-500" />}
+      {trigger}
+    </span>
+  );
+}
+
+export default function RiskWhisperer() {
+  const [activeTab, setActiveTab] = useState('Overview');
+  const [expandedLog, setExpandedLog] = useState<string | null>(null);
+  const [dark, setDark] = useState(false);
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const [todayStr, setTodayStr] = useState('');
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    setTodayStr(new Date().toISOString().slice(0, 10));
+  }, []);
+
+  const bg = dark ? 'bg-[#121212]' : 'bg-[#F9FAFB]';
+  const card = dark ? 'bg-[#1E1E1E] border-gray-800' : 'bg-white border-gray-200';
+  const navBg = dark ? 'bg-[#1E1E1E] border-gray-800' : 'bg-white border-gray-200';
+  const heading = dark ? 'text-gray-100' : 'text-gray-900';
+  const sub = dark ? 'text-gray-400' : 'text-gray-500';
+  const pillBg = dark
+    ? 'bg-[#262626] border-gray-700 text-gray-300'
+    : 'bg-white border-gray-200 text-gray-700';
+  const tabActive = dark ? 'text-gray-100 border-blue-500' : 'text-gray-900 border-blue-600';
+  const tabInactive = dark
+    ? 'text-gray-400 border-transparent hover:text-gray-200'
+    : 'text-gray-500 border-transparent hover:text-gray-700';
+  const divider = dark ? 'border-gray-800' : 'border-gray-200';
+  const innerDivider = dark ? 'border-gray-800' : 'border-gray-100';
+  const barBg = dark ? 'bg-gray-800' : 'bg-gray-100';
+  const signalCard = dark ? 'border-gray-700' : 'border-gray-200';
+
+  const { data: decisionsData, isLoading: decisionsLoading } = useQuery({
+    queryKey: ['decisions'],
+    queryFn: async () => {
+      const res = await fetch('/api/decisions');
+      if (!res.ok) throw new Error('Failed to fetch decisions');
+      return res.json() as Promise<{ decisions: Decision[]; portfolio: Portfolio }>;
+    },
+    refetchInterval: 30_000,
+  });
+
+  const { data: market, isLoading: marketLoading } = useQuery({
+    queryKey: ['market'],
+    queryFn: async () => {
+      const res = await fetch('/api/market-data');
+      if (!res.ok) throw new Error('Failed to fetch market data');
+      return res.json() as Promise<MarketData>;
+    },
+    refetchInterval: 60_000,
+  });
+
+  const { mutate: runAgent, isPending: agentRunning } = useMutation({
+    mutationFn: async () => {
+      setAgentError(null);
+      const res = await fetch('/api/agent/run', { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error ?? 'Agent run failed');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['decisions'] });
+      qc.invalidateQueries({ queryKey: ['market'] });
+    },
+    onError: (err: Error) => setAgentError(err.message),
+  });
+
+  const decisions: Decision[] = decisionsData?.decisions ?? [];
+  const portfolio: Portfolio = decisionsData?.portfolio ?? {
+    meth_allocation: 62,
+    usdy_allocation: 38,
+    total_value_usd: 77830,
+  };
+  const latestRisk = decisions[0]?.risk_after ?? 54;
+  const prevRisk = decisions[1]?.risk_after ?? 68;
+  const executedToday = decisions.filter(
+    (d) => d.status === 'Executed' && d.created_at.slice(0, 10) === todayStr
+  ).length;
+  const methValue = Math.round(
+    (portfolio.meth_allocation / 100) * Number(portfolio.total_value_usd)
+  );
+  const usdyValue = Math.round(
+    (portfolio.usdy_allocation / 100) * Number(portfolio.total_value_usd)
+  );
+  const blendedApy = (
+    (portfolio.meth_allocation / 100) * 4.8 +
+    (portfolio.usdy_allocation / 100) * 5.1
+  ).toFixed(2);
+  const annualYield = Math.round(
+    (parseFloat(blendedApy) / 100) * Number(portfolio.total_value_usd)
+  );
+
+  const assets = [
+    {
+      symbol: 'mETH',
+      name: 'Mantle Staked Ether',
+      allocation: portfolio.meth_allocation,
+      value: `$${methValue.toLocaleString()}`,
+      apy: '4.8%',
+      risk: 'Medium',
+      riskColor: 'bg-yellow-500',
+      change: market ? `${market.ethChange >= 0 ? '+' : ''}${market.ethChange}%` : '—',
+      positive: market ? market.ethChange >= 0 : true,
+      price: market ? `$${market.methPrice.toLocaleString()}` : '—',
+      category: 'Staked ETH',
+    },
+    {
+      symbol: 'USDY',
+      name: 'Ondo US Dollar Yield',
+      allocation: portfolio.usdy_allocation,
+      value: `$${usdyValue.toLocaleString()}`,
+      apy: '5.1%',
+      risk: 'Low',
+      riskColor: 'bg-green-500',
+      change: market ? `${market.usdyChange >= 0 ? '+' : ''}${market.usdyChange}%` : '—',
+      positive: market ? market.usdyChange >= 0 : true,
+      price: market ? `$${market.usdyPrice.toFixed(4)}` : '—',
+      category: 'RWA Stablecoin',
+    },
+  ];
+
+  const riskLabel = latestRisk < 40 ? 'Low' : latestRisk < 65 ? 'Moderate' : 'High';
+  const sentimentSub = market
+    ? market.sentimentScore > 0.3
+      ? 'Bullish'
+      : market.sentimentScore < -0.3
+        ? 'Bearish'
+        : 'Neutral'
+    : '—';
+
+  return (
+    <div className={`min-h-screen ${bg} font-inter transition-colors duration-200`}>
+      {/* Navbar */}
+      <header className={`${navBg} border-b px-6 py-4 sticky top-0 z-10`}>
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <img src={LOGO_URL} alt="Risk Whisperer" className="w-8 h-8 rounded-lg object-cover" />
+            <div>
+              <p className={`text-sm font-semibold ${heading}`}>Risk Whisperer</p>
+              <p className={`text-xs ${sub}`}>Mantle RWA AI Agent</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => runAgent()}
+              disabled={agentRunning}
+              className={`inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-colors duration-150 ${agentRunning ? 'bg-blue-400 text-white cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+            >
+              {agentRunning ? (
+                <>
+                  <RefreshCw size={13} className="animate-spin" />
+                  Running...
+                </>
+              ) : (
+                <>
+                  <Play size={13} />
+                  Run Agent
+                </>
+              )}
+            </button>
+            <span
+              className={`border rounded-full px-3 py-1 text-xs inline-flex items-center gap-1.5 ${pillBg}`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+              Agent Active
+            </span>
+            <span
+              className={`hidden sm:inline-flex border rounded-full px-3 py-1 text-xs items-center gap-1.5 ${pillBg}`}
+            >
+              <Wallet size={10} />
+              0x4f2b...9c1a
+            </span>
+            <button
+              onClick={() => setDark(!dark)}
+              className={`w-8 h-8 rounded-full flex items-center justify-center border transition-colors duration-150 ${dark ? 'bg-[#262626] border-gray-700 text-gray-300 hover:bg-gray-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+              aria-label="Toggle dark mode"
+            >
+              {dark ? <Sun size={14} /> : <Moon size={14} />}
+            </button>
+          </div>
+        </div>
+        {agentError && (
+          <div className="max-w-6xl mx-auto mt-2">
+            <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              ⚠ {agentError}
+            </p>
+          </div>
+        )}
+      </header>
+
+      <div className="max-w-6xl mx-auto px-6 py-8">
+        <div className="mb-8">
+          <h1 className={`text-3xl font-semibold ${heading} tracking-tight`}>Risk Whisperer</h1>
+          <p className={`${sub} text-sm mt-1`}>
+            Autonomous RWA risk manager — every decision recorded on Mantle.
+          </p>
+        </div>
+
+        <div className={`flex gap-6 border-b ${divider} mb-8`}>
+          {TABS.map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`pb-3 text-sm -mb-[1px] border-b-2 transition-colors duration-150 ${activeTab === tab ? `font-medium ${tabActive}` : `font-normal ${tabInactive}`}`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {/* OVERVIEW */}
+        {activeTab === 'Overview' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className={`${card} rounded-xl border p-5`}>
+                <p className={`text-xs font-medium ${sub} mb-1`}>Total Portfolio</p>
+                <p className={`text-2xl font-semibold ${heading}`}>
+                  ${Number(portfolio.total_value_usd).toLocaleString()}
+                </p>
+                <p className={`text-xs ${sub} mt-1 flex items-center gap-1`}>
+                  <TrendingUp size={11} className="text-green-500" />
+                  {decisions.length} AI decisions made
+                </p>
+              </div>
+              <div className={`${card} rounded-xl border p-5 flex items-center gap-4`}>
+                <div
+                  className="relative flex items-center justify-center"
+                  style={{ width: 64, height: 64 }}
+                >
+                  <RingChart value={latestRisk} size={64} color="#EA580C" dark={dark} />
+                  <span className={`absolute text-xs font-semibold ${heading}`}>{latestRisk}%</span>
+                </div>
+                <div>
+                  <p className={`text-xs font-medium ${sub} mb-0.5`}>Risk Score</p>
+                  <p className={`text-sm font-semibold ${heading}`}>{riskLabel}</p>
+                  <p className={`text-xs ${sub}`}>
+                    {latestRisk < prevRisk
+                      ? `↓ from ${prevRisk}%`
+                      : latestRisk > prevRisk
+                        ? `↑ from ${prevRisk}%`
+                        : 'Unchanged'}
+                  </p>
+                </div>
+              </div>
+              <div className={`${card} rounded-xl border p-5`}>
+                <p className={`text-xs font-medium ${sub} mb-1`}>Actions Today</p>
+                <p className={`text-2xl font-semibold ${heading}`}>{executedToday}</p>
+                <p className={`text-xs ${sub} mt-1`}>autonomous executions</p>
+              </div>
+              <div className={`${card} rounded-xl border p-5`}>
+                <p className={`text-xs font-medium ${sub} mb-1`}>Total Decisions</p>
+                <p className={`text-2xl font-semibold ${heading}`}>{decisions.length}</p>
+                <p className={`text-xs ${sub} mt-1 flex items-center gap-1`}>
+                  <Clock size={11} />
+                  {market ? `Updated ${fmtTime(market.fetchedAt)}` : 'Live data'}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className={`${card} rounded-xl border p-6 md:col-span-1`}>
+                <h2 className={`text-base font-semibold ${heading} mb-1`}>Asset Allocation</h2>
+                <p className={`text-sm ${sub} mb-5`}>AI-managed portfolio split</p>
+                <div className="space-y-4">
+                  {assets.map((asset) => (
+                    <div key={asset.symbol}>
+                      <div className="flex justify-between items-center mb-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-sm font-medium ${heading}`}>{asset.symbol}</span>
+                          <span className={`border rounded-full px-2 py-0.5 text-xs ${pillBg}`}>
+                            {asset.category}
+                          </span>
+                        </div>
+                        <span className={`text-sm font-semibold ${heading}`}>
+                          {asset.allocation}%
+                        </span>
+                      </div>
+                      <div className={`h-1.5 ${barBg} rounded-full overflow-hidden`}>
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${asset.allocation}%`,
+                            backgroundColor: asset.symbol === 'mETH' ? '#2563EB' : '#10B981',
+                          }}
+                        />
+                      </div>
+                      <div className="flex justify-between mt-1">
+                        <span className={`text-xs ${sub}`}>{asset.value}</span>
+                        <span
+                          className={`text-xs ${asset.positive ? 'text-green-600' : 'text-red-500'}`}
+                        >
+                          {asset.change}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className={`mt-6 pt-5 border-t ${innerDivider}`}>
+                  <p className={`text-xs ${sub} mb-2`}>Avg. Blended APY</p>
+                  <p className={`text-xl font-semibold ${heading}`}>{blendedApy}%</p>
+                  <p className={`text-xs ${sub} mt-0.5`}>
+                    ≈ ${annualYield.toLocaleString()} / year
+                  </p>
+                </div>
+              </div>
+
+              <div className={`${card} rounded-xl border p-6 md:col-span-2`}>
+                <div className="flex items-center justify-between mb-5">
+                  <div>
+                    <h2 className={`text-base font-semibold ${heading}`}>Recent Decisions</h2>
+                    <p className={`text-sm ${sub} mt-0.5`}>Live on-chain reasoning log</p>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('Risk Log')}
+                    className={`rounded-full px-3 py-1.5 text-sm font-medium inline-flex items-center gap-1.5 transition-colors duration-150 ${dark ? 'bg-blue-950 text-blue-400 hover:bg-blue-900' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
+                  >
+                    View all <ChevronRight size={13} />
+                  </button>
+                </div>
+                {decisionsLoading ? (
+                  <div className="space-y-4">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className={`h-16 rounded-lg ${barBg} animate-pulse`} />
+                    ))}
+                  </div>
+                ) : decisions.length === 0 ? (
+                  <div className={`text-center py-10 ${sub}`}>
+                    <p className="text-sm">No decisions yet.</p>
+                    <p className="text-xs mt-1">
+                      Click <strong>Run Agent</strong> to generate the first one.
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    {decisions.slice(0, 3).map((entry, i) => (
+                      <div
+                        key={entry.id}
+                        className={`py-4 ${i < 2 ? `border-b ${innerDivider}` : ''}`}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                              <TriggerPill trigger={entry.trigger_type} dark={dark} />
+                              <ActionPill action={entry.action} dark={dark} />
+                            </div>
+                            <p
+                              className={`text-sm ${dark ? 'text-gray-300' : 'text-gray-600'} leading-relaxed line-clamp-2`}
+                            >
+                              {entry.reasoning}
+                            </p>
+                            <p
+                              className={`text-xs ${dark ? 'text-gray-500' : 'text-gray-400'} mt-1.5`}
+                            >
+                              {fmtDate(entry.created_at)}
+                            </p>
+                          </div>
+                          <div className="flex flex-col items-end gap-2 shrink-0">
+                            <StatusPill status={entry.status} dark={dark} />
+                            <span
+                              className={`text-xs ${dark ? 'text-gray-500' : 'text-gray-400'} font-mono`}
+                            >
+                              {entry.tx_hash}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Market Signals */}
+            <div className={`${card} rounded-xl border p-6`}>
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <h2 className={`text-base font-semibold ${heading} mb-1`}>Live Market Signals</h2>
+                  <p className={`text-sm ${sub}`}>Real-time feeds the agent monitors</p>
+                </div>
+                {market && (
+                  <span className={`text-xs ${sub}`}>Updated {fmtTime(market.fetchedAt)}</span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  {
+                    label: 'ETH Funding Rate',
+                    value: marketLoading
+                      ? '—'
+                      : `${(market?.fundingRate ?? 0) >= 0 ? '+' : ''}${market?.fundingRate ?? 0}%`,
+                    info: market
+                      ? (market.fundingRate ?? 0) >= 0
+                        ? 'Positive (bullish)'
+                        : 'Negative (bearish)'
+                      : 'Loading...',
+                    icon: (
+                      <TrendingUp
+                        size={14}
+                        className={
+                          market && market.fundingRate >= 0 ? 'text-green-500' : 'text-red-400'
+                        }
+                      />
+                    ),
+                  },
+                  {
+                    label: 'USDY Peg Deviation',
+                    value: marketLoading ? '—' : `${market?.usdyPegDeviation ?? 0}%`,
+                    info: market
+                      ? market.usdyPegDeviation < 0.5
+                        ? 'Healthy — no action'
+                        : '⚠ Warning'
+                      : 'Loading...',
+                    icon: (
+                      <ShieldCheck
+                        size={14}
+                        className={
+                          market && market.usdyPegDeviation < 0.5
+                            ? 'text-green-500'
+                            : 'text-red-400'
+                        }
+                      />
+                    ),
+                  },
+                  {
+                    label: 'Crypto Sentiment',
+                    value: marketLoading
+                      ? '—'
+                      : `${(market?.sentimentScore ?? 0) >= 0 ? '+' : ''}${market?.sentimentScore ?? 0}`,
+                    info: marketLoading ? 'Loading...' : sentimentSub,
+                    icon: (
+                      <Eye
+                        size={14}
+                        className={
+                          market && market.sentimentScore > 0 ? 'text-green-500' : 'text-orange-500'
+                        }
+                      />
+                    ),
+                  },
+                  {
+                    label: 'Mantle TVL Change',
+                    value: marketLoading
+                      ? '—'
+                      : `${(market?.mantleTvlChange ?? 0) >= 0 ? '+' : ''}${market?.mantleTvlChange ?? 0}%`,
+                    info: market
+                      ? market.mantleTvlChange >= 0
+                        ? 'Ecosystem growing'
+                        : 'Contraction'
+                      : 'Loading...',
+                    icon: (
+                      <Activity
+                        size={14}
+                        className={
+                          market && market.mantleTvlChange >= 0 ? 'text-blue-500' : 'text-red-400'
+                        }
+                      />
+                    ),
+                  },
+                ].map((signal) => (
+                  <div key={signal.label} className={`border ${signalCard} rounded-xl p-4`}>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      {signal.icon}
+                      <p className={`text-xs font-medium ${sub}`}>{signal.label}</p>
+                    </div>
+                    <p className={`text-lg font-semibold ${heading}`}>{signal.value}</p>
+                    <p className={`text-xs ${sub} mt-0.5`}>{signal.info}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* RISK LOG */}
+        {activeTab === 'Risk Log' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className={`text-base font-semibold ${heading}`}>On-Chain Decision Log</h2>
+                <p className={`text-sm ${sub} mt-0.5`}>
+                  Every action permanently recorded on the Mantle network
+                </p>
+              </div>
+              <span
+                className={`border rounded-full px-3 py-1 text-xs inline-flex items-center gap-1.5 ${pillBg}`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                {decisions.length} entries recorded
+              </span>
+            </div>
+            {decisionsLoading ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className={`h-24 rounded-xl ${barBg} animate-pulse`} />
+                ))}
+              </div>
+            ) : decisions.length === 0 ? (
+              <div className={`${card} rounded-xl border p-12 text-center`}>
+                <p className={`text-sm ${sub}`}>No decisions recorded yet.</p>
+                <p className={`text-xs ${sub} mt-1`}>
+                  Click <strong>Run Agent</strong> in the navbar to generate your first AI decision.
+                </p>
+              </div>
+            ) : (
+              decisions.map((entry) => {
+                const key = String(entry.id);
+                return (
+                  <div
+                    key={entry.id}
+                    className={`${card} rounded-xl border transition-colors duration-150 ${dark ? 'hover:border-gray-700' : 'hover:border-gray-300'}`}
+                  >
+                    <button
+                      className="w-full text-left p-5"
+                      onClick={() => setExpandedLog(expandedLog === key ? null : key)}
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            <TriggerPill trigger={entry.trigger_type} dark={dark} />
+                            <ActionPill action={entry.action} dark={dark} />
+                            <StatusPill status={entry.status} dark={dark} />
+                          </div>
+                          <p
+                            className={`text-sm ${dark ? 'text-gray-300' : 'text-gray-600'} leading-relaxed line-clamp-2`}
+                          >
+                            {entry.reasoning}
+                          </p>
+                          <div className="flex items-center gap-4 mt-2">
+                            <span className={`text-xs ${dark ? 'text-gray-500' : 'text-gray-400'}`}>
+                              {fmtDate(entry.created_at)}
+                            </span>
+                            <span
+                              className={`font-mono text-xs ${dark ? 'text-gray-500' : 'text-gray-400'}`}
+                            >
+                              {entry.tx_hash}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-2 shrink-0">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs ${sub}`}>Confidence</span>
+                            <div
+                              className="relative flex items-center justify-center"
+                              style={{ width: 36, height: 36 }}
+                            >
+                              <RingChart
+                                value={entry.confidence}
+                                size={36}
+                                color={
+                                  entry.confidence > 85
+                                    ? '#2563EB'
+                                    : entry.confidence > 70
+                                      ? '#EA580C'
+                                      : '#9CA3AF'
+                                }
+                                dark={dark}
+                              />
+                              <span className={`absolute text-[8px] font-semibold ${heading}`}>
+                                {entry.confidence}%
+                              </span>
+                            </div>
+                          </div>
+                          <ChevronRight
+                            size={16}
+                            className={`${dark ? 'text-gray-500' : 'text-gray-400'} transition-transform duration-200 ${expandedLog === key ? 'rotate-90' : ''}`}
+                          />
+                        </div>
+                      </div>
+                    </button>
+                    {expandedLog === key && (
+                      <div className={`border-t ${innerDivider} p-5`}>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                          <div>
+                            <p className={`text-xs font-medium ${sub} mb-2`}>Full Reasoning</p>
+                            <p
+                              className={`text-sm ${dark ? 'text-gray-300' : 'text-gray-600'} leading-relaxed`}
+                            >
+                              {entry.reasoning}
+                            </p>
+                          </div>
+                          <div className="space-y-3">
+                            <p className={`text-xs font-medium ${sub}`}>Execution Details</p>
+                            {entry.action !== 'Hold' && entry.from_asset !== '-' && (
+                              <div className="flex items-center gap-2">
+                                <span className={`border rounded-full px-3 py-1 text-xs ${pillBg}`}>
+                                  {entry.from_asset}
+                                </span>
+                                <ArrowRightLeft
+                                  size={12}
+                                  className={dark ? 'text-gray-500' : 'text-gray-400'}
+                                />
+                                <span className={`border rounded-full px-3 py-1 text-xs ${pillBg}`}>
+                                  {entry.to_asset}
+                                </span>
+                              </div>
+                            )}
+                            <p className={`text-sm ${heading} font-medium`}>
+                              {entry.amount === '-' ? 'No trade executed' : entry.amount}
+                            </p>
+                          </div>
+                          <div className="space-y-3">
+                            <p className={`text-xs font-medium ${sub}`}>Risk Delta</p>
+                            <div className="flex items-center gap-3">
+                              <div className="text-center">
+                                <div
+                                  className="relative inline-flex items-center justify-center"
+                                  style={{ width: 48, height: 48 }}
+                                >
+                                  <RingChart
+                                    value={entry.risk_before}
+                                    size={48}
+                                    color="#9CA3AF"
+                                    dark={dark}
+                                  />
+                                  <span className={`absolute text-[9px] font-semibold ${heading}`}>
+                                    {entry.risk_before}%
+                                  </span>
+                                </div>
+                                <p
+                                  className={`text-xs ${dark ? 'text-gray-500' : 'text-gray-400'} mt-1`}
+                                >
+                                  Before
+                                </p>
+                              </div>
+                              <ChevronRight
+                                size={14}
+                                className={dark ? 'text-gray-500' : 'text-gray-400'}
+                              />
+                              <div className="text-center">
+                                <div
+                                  className="relative inline-flex items-center justify-center"
+                                  style={{ width: 48, height: 48 }}
+                                >
+                                  <RingChart
+                                    value={entry.risk_after}
+                                    size={48}
+                                    color={
+                                      entry.risk_after < entry.risk_before ? '#10B981' : '#EA580C'
+                                    }
+                                    dark={dark}
+                                  />
+                                  <span className={`absolute text-[9px] font-semibold ${heading}`}>
+                                    {entry.risk_after}%
+                                  </span>
+                                </div>
+                                <p
+                                  className={`text-xs ${dark ? 'text-gray-500' : 'text-gray-400'} mt-1`}
+                                >
+                                  After
+                                </p>
+                              </div>
+                            </div>
+                            <a
+                              href={`https://explorer.mantle.xyz/tx/${entry.tx_hash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className={`inline-flex items-center gap-1 text-xs transition-colors duration-150 ${dark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}
+                            >
+                              View on Mantle Explorer <ExternalLink size={10} />
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* ASSETS */}
+        {activeTab === 'Assets' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {assets.map((asset) => (
+                <div key={asset.symbol} className={`${card} rounded-xl border p-6`}>
+                  <div className="flex items-start justify-between mb-5">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className={`text-lg font-semibold ${heading}`}>{asset.symbol}</h3>
+                        <span
+                          className={`border rounded-full px-3 py-1 text-xs inline-flex items-center gap-1.5 ${pillBg}`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${asset.riskColor}`} />
+                          {asset.risk} Risk
+                        </span>
+                      </div>
+                      <p className={`text-sm ${sub}`}>{asset.name}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className={`text-lg font-semibold ${heading}`}>{asset.value}</p>
+                      <p
+                        className={`text-sm ${asset.positive ? 'text-green-600' : 'text-red-500'}`}
+                      >
+                        {asset.change} 24h
+                      </p>
+                    </div>
+                  </div>
+                  <div className={`space-y-3 border-t ${innerDivider} pt-5`}>
+                    {[
+                      { label: 'Current Price', value: asset.price },
+                      { label: 'Portfolio Share', value: `${asset.allocation}%` },
+                      { label: 'Current APY', value: asset.apy },
+                      { label: 'Category', value: asset.category },
+                    ].map((row) => (
+                      <div key={row.label} className="flex justify-between">
+                        <span className={`text-sm ${sub}`}>{row.label}</span>
+                        <span className={`text-sm font-medium ${heading}`}>{row.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-5">
+                    <div className="flex justify-between mb-1.5">
+                      <span className={`text-xs ${sub}`}>Portfolio weight</span>
+                      <span className={`text-xs font-medium ${heading}`}>{asset.allocation}%</span>
+                    </div>
+                    <div className={`h-1.5 ${barBg} rounded-full overflow-hidden`}>
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${asset.allocation}%`,
+                          backgroundColor: asset.symbol === 'mETH' ? '#2563EB' : '#10B981',
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className={`${card} rounded-xl border p-6`}>
+              <h2 className={`text-base font-semibold ${heading} mb-1`}>Agent Strategy Rules</h2>
+              <p className={`text-sm ${sub} mb-5`}>The guardrails the AI operates within</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-2">
+                {[
+                  'mETH allocation must stay between 40% and 75%',
+                  'USDY position must stay above 25% (safety floor)',
+                  'Maximum single reallocation: 15%',
+                  'Minimum confidence threshold to execute: 70%',
+                  'All decisions recorded on Mantle before execution',
+                  'Cooldown of 2 hours between consecutive trades',
+                  'USDY peg deviation above 0.5% triggers emergency hold',
+                  'mETH yield must be > 3.5% APY to maintain allocation',
+                ].map((rule) => (
+                  <div key={rule} className="flex items-start gap-2 py-1.5">
+                    <span className={`${sub} mt-0.5 shrink-0`}>-</span>
+                    <span className={`text-sm ${dark ? 'text-gray-300' : 'text-gray-600'}`}>
+                      {rule}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* AGENT IDENTITY */}
+        {activeTab === 'Agent Identity' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className={`${card} rounded-xl border p-6 md:col-span-1`}>
+                <h2 className={`text-base font-semibold ${heading} mb-1`}>ERC-8004 Identity NFT</h2>
+                <p className={`text-sm ${sub} mb-5`}>On-chain agent identity standard</p>
+                <div
+                  className={`aspect-square rounded-xl border flex flex-col items-center justify-center mb-5 relative overflow-hidden ${dark ? 'border-gray-700 bg-gradient-to-br from-blue-950 to-indigo-950' : 'border-gray-200 bg-gradient-to-br from-blue-50 to-indigo-100'}`}
+                >
+                  <div className="absolute inset-0 opacity-10">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <div
+                        key={i}
+                        className="absolute rounded-full border border-blue-400"
+                        style={{
+                          width: `${(i + 1) * 40}px`,
+                          height: `${(i + 1) * 40}px`,
+                          top: '50%',
+                          left: '50%',
+                          transform: 'translate(-50%, -50%)',
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <img
+                    src={LOGO_URL}
+                    alt="Risk Whisperer"
+                    className="w-16 h-16 rounded-xl object-cover mb-3 relative z-10"
+                  />
+                  <p className={`text-sm font-semibold ${heading} relative z-10`}>
+                    RISK-WHISPERER-01
+                  </p>
+                  <p className={`text-xs ${sub} relative z-10 mt-0.5`}>Token ID #00421</p>
+                </div>
+                <div className="space-y-3">
+                  {[
+                    { label: 'Standard', value: 'ERC-8004' },
+                    { label: 'Network', value: 'Mantle Mainnet' },
+                    { label: 'Token ID', value: '#00421' },
+                    { label: 'Minted', value: 'May 24, 2025' },
+                  ].map((row) => (
+                    <div key={row.label} className="flex justify-between items-center">
+                      <span className={`text-xs ${sub}`}>{row.label}</span>
+                      <span className={`border rounded-full px-3 py-1 text-xs ${pillBg}`}>
+                        {row.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="md:col-span-2 space-y-5">
+                <div className={`${card} rounded-xl border p-6`}>
+                  <h2 className={`text-base font-semibold ${heading} mb-1`}>Agent Reputation</h2>
+                  <p className={`text-sm ${sub} mb-5`}>
+                    On-chain performance record — permanent and verifiable
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {[
+                      {
+                        label: 'Total Decisions',
+                        value: String(decisions.length),
+                        info: 'lifetime actions',
+                      },
+                      {
+                        label: 'Executed Rate',
+                        value:
+                          decisions.length > 0
+                            ? `${Math.round((decisions.filter((d) => d.status === 'Executed').length / decisions.length) * 100)}%`
+                            : '—',
+                        info: 'decisions executed',
+                      },
+                      {
+                        label: 'Risk Reductions',
+                        value: String(decisions.filter((d) => d.risk_after < d.risk_before).length),
+                        info: 'adverse moves avoided',
+                      },
+                      { label: 'Latest Risk', value: `${latestRisk}%`, info: 'current risk score' },
+                      {
+                        label: 'Avg Confidence',
+                        value:
+                          decisions.length > 0
+                            ? `${Math.round(decisions.reduce((a, d) => a + d.confidence, 0) / decisions.length)}%`
+                            : '—',
+                        info: 'per decision',
+                      },
+                      {
+                        label: 'Actions Today',
+                        value: String(executedToday),
+                        info: "today's executions",
+                      },
+                    ].map((stat) => (
+                      <div key={stat.label} className={`border ${signalCard} rounded-xl p-4`}>
+                        <p className={`text-xs font-medium ${sub} mb-1`}>{stat.label}</p>
+                        <p className={`text-xl font-semibold ${heading}`}>{stat.value}</p>
+                        <p className={`text-xs ${sub} mt-0.5`}>{stat.info}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className={`${card} rounded-xl border p-6`}>
+                  <h2 className={`text-base font-semibold ${heading} mb-1`}>Agent Achievements</h2>
+                  <p className={`text-sm ${sub} mb-5`}>
+                    Milestones recorded on the Mantle blockchain
+                  </p>
+                  <div className="space-y-2">
+                    {[
+                      {
+                        badge: '🛡️ First Shield',
+                        desc: 'First successful risk reduction executed on-chain',
+                        unlocked: decisions.some((d) => d.risk_after < d.risk_before),
+                      },
+                      {
+                        badge: '⚡ Signal Master',
+                        desc: 'Made 10+ autonomous decisions',
+                        unlocked: decisions.length >= 10,
+                      },
+                      {
+                        badge: '🎯 Precision Agent',
+                        desc: 'Maintained 80%+ execution rate',
+                        unlocked:
+                          decisions.length > 0 &&
+                          decisions.filter((d) => d.status === 'Executed').length /
+                            decisions.length >=
+                            0.8,
+                      },
+                      {
+                        badge: '📡 Radical Transparency',
+                        desc: 'All reasoning logs verified and publicly indexed',
+                        unlocked: decisions.length > 0,
+                      },
+                    ].map((a) => (
+                      <div
+                        key={a.badge}
+                        className={`flex items-center gap-4 py-3 border-b ${innerDivider} last:border-0`}
+                      >
+                        <div
+                          className={`w-8 h-8 rounded-lg border flex items-center justify-center text-base shrink-0 ${dark ? 'bg-[#262626] border-gray-700' : 'bg-gray-50 border-gray-200'} ${!a.unlocked ? 'opacity-30 grayscale' : ''}`}
+                        >
+                          {a.badge.split(' ')[0]}
+                        </div>
+                        <div className={`flex-1 ${!a.unlocked ? 'opacity-40' : ''}`}>
+                          <p className={`text-sm font-medium ${heading}`}>
+                            {a.badge.split(' ').slice(1).join(' ')}
+                          </p>
+                          <p className={`text-xs ${sub}`}>{a.desc}</p>
+                        </div>
+                        <span
+                          className={`border rounded-full px-3 py-1 text-xs shrink-0 ${a.unlocked ? 'border-green-300 text-green-600 bg-green-50' : pillBg}`}
+                        >
+                          {a.unlocked ? 'Unlocked' : 'Locked'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <footer className={`border-t ${divider} mt-12`}>
+        <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <img src={LOGO_URL} alt="Risk Whisperer" className="w-7 h-7 rounded-lg object-cover" />
+            <div>
+              <p className={`text-sm font-semibold ${heading}`}>Risk Whisperer</p>
+              <p className={`text-xs ${sub}`}>Built on Mantle · Turing Test Hackathon 2025</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-5">
+            <a
+              href="https://explorer.mantle.xyz"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`text-xs ${sub} hover:underline`}
+            >
+              Mantle Explorer
+            </a>
+            <a href="#" className={`text-xs ${sub} hover:underline`}>
+              ERC-8004 Standard
+            </a>
+            <a href="#" className={`text-xs ${sub} hover:underline`}>
+              Docs
+            </a>
+          </div>
+          <p className={`text-xs ${sub}`}>© 2025 Risk Whisperer</p>
+        </div>
+      </footer>
+    </div>
+  );
+}
