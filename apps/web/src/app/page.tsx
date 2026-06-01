@@ -22,6 +22,30 @@ import {
 
 const LOGO_URL = 'https://raw.createusercontent.com/ef83fbea-b45f-4d4d-8f71-c23d5eb0a565/';
 const TABS = ['Overview', 'Risk Log', 'Assets', 'Agent Identity'];
+const MANTLE_CHAIN_ID = '0x1388';
+const MANTLE_CHAIN_PARAMS = {
+  chainId: MANTLE_CHAIN_ID,
+  chainName: 'Mantle',
+  nativeCurrency: {
+    name: 'Mantle',
+    symbol: 'MNT',
+    decimals: 18,
+  },
+  rpcUrls: ['https://rpc.mantle.xyz'],
+  blockExplorerUrls: ['https://mantlescan.xyz'],
+};
+
+type EthereumProvider = {
+  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  on?: (event: string, listener: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+};
+
+declare global {
+  interface Window {
+    ethereum?: EthereumProvider;
+  }
+}
 
 // Pure ISO string formatters — no new Date() so no hydration mismatch
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -48,6 +72,10 @@ function fmtTime(iso: string): string {
   const ampm = hour >= 12 ? 'PM' : 'AM';
   const hour12 = hour % 12 || 12;
   return `${hour12}:${minute} ${ampm}`;
+}
+
+function shortAddress(address: string): string {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
 interface Decision {
@@ -178,11 +206,34 @@ export default function RiskWhisperer() {
   const [expandedLog, setExpandedLog] = useState<string | null>(null);
   const [dark, setDark] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
+  const [walletAddress, setWalletAddress] = useState('');
+  const [walletError, setWalletError] = useState<string | null>(null);
   const [todayStr, setTodayStr] = useState('');
   const qc = useQueryClient();
 
   useEffect(() => {
     setTodayStr(new Date().toISOString().slice(0, 10));
+  }, []);
+
+  useEffect(() => {
+    const ethereum = window.ethereum;
+    if (!ethereum) return;
+
+    ethereum
+      .request({ method: 'eth_accounts' })
+      .then((accounts) => {
+        const [account] = accounts as string[];
+        if (account) setWalletAddress(account);
+      })
+      .catch(() => undefined);
+
+    const handleAccountsChanged = (...args: unknown[]) => {
+      const [accounts] = args as [string[]];
+      setWalletAddress(accounts?.[0] ?? '');
+    };
+
+    ethereum.on?.('accountsChanged', handleAccountsChanged);
+    return () => ethereum.removeListener?.('accountsChanged', handleAccountsChanged);
   }, []);
 
   const bg = dark ? 'bg-[#121212]' : 'bg-[#F9FAFB]';
@@ -201,6 +252,39 @@ export default function RiskWhisperer() {
   const innerDivider = dark ? 'border-gray-800' : 'border-gray-100';
   const barBg = dark ? 'bg-gray-800' : 'bg-gray-100';
   const signalCard = dark ? 'border-gray-700' : 'border-gray-200';
+
+  async function switchToMantle(ethereum: EthereumProvider) {
+    try {
+      await ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: MANTLE_CHAIN_ID }],
+      });
+    } catch (err) {
+      const code = (err as { code?: number }).code;
+      if (code !== 4902) throw err;
+      await ethereum.request({
+        method: 'wallet_addEthereumChain',
+        params: [MANTLE_CHAIN_PARAMS],
+      });
+    }
+  }
+
+  async function connectWallet() {
+    setWalletError(null);
+    const ethereum = window.ethereum;
+    if (!ethereum) {
+      setWalletError('Install MetaMask, Rabby, or another EVM wallet to connect.');
+      return;
+    }
+
+    try {
+      const accounts = (await ethereum.request({ method: 'eth_requestAccounts' })) as string[];
+      setWalletAddress(accounts[0] ?? '');
+      await switchToMantle(ethereum);
+    } catch (err) {
+      setWalletError(err instanceof Error ? err.message : 'Wallet connection failed');
+    }
+  }
 
   const { data: decisionsData, isLoading: decisionsLoading } = useQuery({
     queryKey: ['decisions'],
@@ -338,12 +422,19 @@ export default function RiskWhisperer() {
               <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
               Agent Active
             </span>
-            <span
-              className={`hidden sm:inline-flex border rounded-full px-3 py-1 text-xs items-center gap-1.5 ${pillBg}`}
+            <button
+              onClick={connectWallet}
+              className={`inline-flex border rounded-full px-3 py-1 text-xs items-center gap-1.5 transition-colors duration-150 ${pillBg} ${dark ? 'hover:bg-gray-700' : 'hover:bg-gray-50'}`}
+              title={walletError ?? (walletAddress ? 'Connected to Mantle wallet' : 'Connect wallet')}
             >
               <Wallet size={10} />
-              0x4f2b...9c1a
-            </span>
+              {walletAddress ? shortAddress(walletAddress) : (
+                <>
+                  <span className="hidden sm:inline">Connect</span>
+                  Wallet
+                </>
+              )}
+            </button>
             <button
               onClick={() => setDark(!dark)}
               className={`w-8 h-8 rounded-full flex items-center justify-center border transition-colors duration-150 ${dark ? 'bg-[#262626] border-gray-700 text-gray-300 hover:bg-gray-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
