@@ -12,8 +12,12 @@ export async function ensureOwnerColumns() {
 }
 
 export async function getOwnerKey(request: Request): Promise<string> {
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (session?.user?.id) return `user:${session.user.id}`;
+  try {
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (session?.user?.id) return `user:${session.user.id}`;
+  } catch (err) {
+    console.warn('Session lookup skipped for anonymous owner fallback:', err);
+  }
 
   const anonymousOwner = request.headers.get(OWNER_HEADER);
   if (anonymousOwner && OWNER_KEY_PATTERN.test(anonymousOwner)) {
