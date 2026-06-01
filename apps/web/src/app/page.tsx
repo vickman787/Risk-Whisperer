@@ -18,6 +18,7 @@ import {
   Play,
   RefreshCw,
   Globe2,
+  Trash2,
 } from 'lucide-react';
 
 const LOGO_URL = 'https://raw.createusercontent.com/ef83fbea-b45f-4d4d-8f71-c23d5eb0a565/';
@@ -35,6 +36,18 @@ const MANTLE_CHAIN_PARAMS = {
   rpcUrls: ['https://rpc.mantle.xyz'],
   blockExplorerUrls: ['https://mantlescan.xyz'],
 };
+const MANTLE_TOKENS = {
+  mETH: {
+    address: '0xcDA86A272531e8640cD7F1a92c01839911B90bb0',
+    name: 'Mantle Staked Ether',
+  },
+  USDY: {
+    address: '0x5bE26527e817998A7206475496fDE1E68957c5A6',
+    name: 'Ondo US Dollar Yield',
+  },
+} as const;
+const ERC20_BALANCE_OF = '0x70a08231';
+const ERC20_DECIMALS = '0x313ce567';
 
 type EthereumProvider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -87,6 +100,52 @@ function fmtTime(iso: string): string {
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function encodeBalanceOf(address: string): string {
+  return `${ERC20_BALANCE_OF}${address.toLowerCase().replace('0x', '').padStart(64, '0')}`;
+}
+
+function formatTokenAmount(raw: bigint, decimals: number, maxDecimals = 4): string {
+  const base = 10n ** BigInt(decimals);
+  const whole = raw / base;
+  const fraction = raw % base;
+
+  if (fraction === 0n || maxDecimals === 0) return whole.toString();
+
+  const paddedFraction = fraction.toString().padStart(decimals, '0');
+  const trimmedFraction = paddedFraction.slice(0, maxDecimals).replace(/0+$/, '');
+
+  return trimmedFraction ? `${whole}.${trimmedFraction}` : whole.toString();
+}
+
+async function ethCall(ethereum: EthereumProvider, to: string, data: string): Promise<string> {
+  return ethereum.request({
+    method: 'eth_call',
+    params: [{ to, data }, 'latest'],
+  }) as Promise<string>;
+}
+
+async function readTokenBalance(
+  ethereum: EthereumProvider,
+  symbol: TokenSymbol,
+  walletAddress: string
+): Promise<WalletTokenBalance> {
+  const token = MANTLE_TOKENS[symbol];
+  const [decimalsHex, balanceHex] = await Promise.all([
+    ethCall(ethereum, token.address, ERC20_DECIMALS),
+    ethCall(ethereum, token.address, encodeBalanceOf(walletAddress)),
+  ]);
+  const decimals = Number(BigInt(decimalsHex));
+  const rawBalance = BigInt(balanceHex);
+
+  return {
+    symbol,
+    address: token.address,
+    decimals,
+    rawBalance: rawBalance.toString(),
+    balance: formatTokenAmount(rawBalance, decimals),
+  };
 }
 
 function WalletLogo({ id }: { id: string }) {
@@ -161,6 +220,18 @@ interface MarketData {
   fundingRate: number;
   fetchedAt: string;
 }
+
+type TokenSymbol = keyof typeof MANTLE_TOKENS;
+
+type WalletTokenBalance = {
+  symbol: TokenSymbol;
+  address: string;
+  balance: string;
+  rawBalance: string;
+  decimals: number;
+};
+
+type WalletBalances = Record<TokenSymbol, WalletTokenBalance>;
 
 function RingChart({
   value,
@@ -349,6 +420,7 @@ export default function RiskWhisperer() {
       const accounts = (await ethereum.request({ method: 'eth_requestAccounts' })) as string[];
       setWalletAddress(accounts[0] ?? '');
       await switchToMantle(ethereum);
+      qc.invalidateQueries({ queryKey: ['wallet-balances'] });
       setWalletMenuOpen(false);
     } catch (err) {
       setWalletError(err instanceof Error ? err.message : 'Wallet connection failed');
@@ -366,6 +438,7 @@ export default function RiskWhisperer() {
     setWalletAddress('');
     setWalletError(null);
     setWalletMenuOpen(false);
+    qc.invalidateQueries({ queryKey: ['wallet-balances'] });
   }
 
   const { data: decisionsData, isLoading: decisionsLoading } = useQuery({
@@ -388,6 +461,36 @@ export default function RiskWhisperer() {
     refetchInterval: 60_000,
   });
 
+  const {
+    data: walletBalances,
+    isLoading: walletBalancesLoading,
+    error: walletBalancesError,
+  } = useQuery({
+    queryKey: ['wallet-balances', walletAddress],
+    enabled: Boolean(walletAddress),
+    retry: false,
+    queryFn: async () => {
+      const ethereum = window.ethereum;
+      if (!ethereum) throw new Error('No wallet provider found');
+
+      const chainId = (await ethereum.request({ method: 'eth_chainId' })) as string;
+      if (chainId.toLowerCase() !== MANTLE_CHAIN_ID) {
+        throw new Error('Switch your wallet to Mantle Mainnet to read USDY and mETH balances.');
+      }
+
+      const [meth, usdy] = await Promise.all([
+        readTokenBalance(ethereum, 'mETH', walletAddress),
+        readTokenBalance(ethereum, 'USDY', walletAddress),
+      ]);
+
+      return {
+        mETH: meth,
+        USDY: usdy,
+      } satisfies WalletBalances;
+    },
+    refetchInterval: 30_000,
+  });
+
   const { mutate: runAgent, isPending: agentRunning } = useMutation({
     mutationFn: async () => {
       setAgentError(null);
@@ -404,6 +507,30 @@ export default function RiskWhisperer() {
     },
     onError: (err: Error) => setAgentError(err.message),
   });
+
+  const { mutate: deleteDecision, isPending: decisionDeleting, variables: deletingDecisionId } =
+    useMutation({
+      mutationFn: async (id: number) => {
+        const res = await fetch(`/api/decisions?id=${id}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error ?? 'Failed to delete decision');
+        }
+        return res.json();
+      },
+      onSuccess: (_data, id) => {
+        if (expandedLog === String(id)) setExpandedLog(null);
+        qc.invalidateQueries({ queryKey: ['decisions'] });
+      },
+      onError: (err: Error) => setAgentError(err.message),
+    });
+
+  function requestDeleteDecision(id: number) {
+    const confirmed = window.confirm(
+      'Delete this AI decision from the saved log? This cannot be undone.'
+    );
+    if (confirmed) deleteDecision(id);
+  }
 
   const decisions: Decision[] = decisionsData?.decisions ?? [];
   const portfolio: Portfolio = decisionsData?.portfolio ?? {
@@ -447,6 +574,14 @@ export default function RiskWhisperer() {
       positive: market ? market.ethChange >= 0 : true,
       price: market ? `$${market.methPrice.toLocaleString()}` : '—',
       category: 'Staked ETH',
+      walletBalance: walletBalances?.mETH.balance,
+      walletValue:
+        walletBalances && market
+          ? `$${(Number(walletBalances.mETH.balance) * market.methPrice).toLocaleString(
+              undefined,
+              { maximumFractionDigits: 2 }
+            )}`
+          : undefined,
     },
     {
       symbol: 'USDY',
@@ -460,6 +595,14 @@ export default function RiskWhisperer() {
       positive: market ? market.usdyChange >= 0 : true,
       price: market ? `$${market.usdyPrice.toFixed(4)}` : '—',
       category: 'RWA Stablecoin',
+      walletBalance: walletBalances?.USDY.balance,
+      walletValue:
+        walletBalances && market
+          ? `$${(Number(walletBalances.USDY.balance) * market.usdyPrice).toLocaleString(
+              undefined,
+              { maximumFractionDigits: 2 }
+            )}`
+          : undefined,
     },
   ];
 
@@ -768,6 +911,20 @@ export default function RiskWhisperer() {
                             >
                               Sim {entry.tx_hash}
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => requestDeleteDecision(entry.id)}
+                              disabled={decisionDeleting && deletingDecisionId === entry.id}
+                              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed ${
+                                dark
+                                  ? 'text-red-300 hover:bg-red-950/50'
+                                  : 'text-red-600 hover:bg-red-50'
+                              }`}
+                              title="Delete decision"
+                            >
+                              <Trash2 size={12} />
+                              Delete
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -915,11 +1072,13 @@ export default function RiskWhisperer() {
                     key={entry.id}
                     className={`${card} rounded-xl border transition-colors duration-150 ${dark ? 'hover:border-gray-700' : 'hover:border-gray-300'}`}
                   >
-                    <button
-                      className="w-full text-left p-5"
-                      onClick={() => setExpandedLog(expandedLog === key ? null : key)}
-                    >
-                      <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3 p-5">
+                      <button
+                        type="button"
+                        className="flex-1 text-left"
+                        onClick={() => setExpandedLog(expandedLog === key ? null : key)}
+                      >
+                        <div className="flex items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-2 flex-wrap">
                             <TriggerPill trigger={entry.trigger_type} dark={dark} />
@@ -971,8 +1130,23 @@ export default function RiskWhisperer() {
                             className={`${dark ? 'text-gray-500' : 'text-gray-400'} transition-transform duration-200 ${expandedLog === key ? 'rotate-90' : ''}`}
                           />
                         </div>
-                      </div>
-                    </button>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => requestDeleteDecision(entry.id)}
+                        disabled={decisionDeleting && deletingDecisionId === entry.id}
+                        className={`mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed ${
+                          dark
+                            ? 'text-red-300 hover:bg-red-950/50'
+                            : 'text-red-600 hover:bg-red-50'
+                        }`}
+                        title="Delete decision"
+                        aria-label="Delete decision"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                     {expandedLog === key && (
                       <div className={`border-t ${innerDivider} p-5`}>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -1073,6 +1247,77 @@ export default function RiskWhisperer() {
         {/* ASSETS */}
         {activeTab === 'Assets' && (
           <div className="space-y-6">
+            <div className={`${card} rounded-xl border p-6`}>
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h2 className={`text-base font-semibold ${heading}`}>Connected Wallet Holdings</h2>
+                  <p className={`text-sm ${sub} mt-0.5`}>
+                    Read-only USDY and mETH balances on Mantle Mainnet
+                  </p>
+                </div>
+                <span className={`border rounded-full px-3 py-1 text-xs ${pillBg}`}>
+                  {walletAddress ? shortAddress(walletAddress) : 'Connect wallet to test real tokens'}
+                </span>
+              </div>
+
+              {!walletAddress ? (
+                <p className={`text-sm ${sub} mt-5`}>
+                  Use MetaMask, Rabby, or another injected wallet to read your real Mantle token
+                  balances. This does not request a signature or token approval.
+                </p>
+              ) : walletBalancesLoading ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5">
+                  <div className={`h-20 rounded-xl ${barBg} animate-pulse`} />
+                  <div className={`h-20 rounded-xl ${barBg} animate-pulse`} />
+                </div>
+              ) : walletBalancesError ? (
+                <div
+                  className={`mt-5 rounded-xl border p-4 text-sm ${
+                    dark
+                      ? 'border-orange-900 bg-orange-950/30 text-orange-200'
+                      : 'border-orange-200 bg-orange-50 text-orange-700'
+                  }`}
+                >
+                  {walletBalancesError instanceof Error
+                    ? walletBalancesError.message
+                    : 'Could not read wallet balances.'}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5">
+                  {(['mETH', 'USDY'] as TokenSymbol[]).map((symbol) => {
+                    const tokenBalance = walletBalances?.[symbol];
+                    const marketPrice =
+                      symbol === 'mETH' ? market?.methPrice : market?.usdyPrice;
+                    const walletValue =
+                      tokenBalance && marketPrice
+                        ? Number(tokenBalance.balance) * marketPrice
+                        : undefined;
+
+                    return (
+                      <div key={symbol} className={`rounded-xl border ${signalCard} p-4`}>
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className={`text-sm font-semibold ${heading}`}>{symbol}</p>
+                            <p className={`text-xs ${sub}`}>{MANTLE_TOKENS[symbol].name}</p>
+                          </div>
+                          <span className={`text-xs ${sub}`}>Real balance</span>
+                        </div>
+                        <p className={`text-2xl font-semibold ${heading} mt-3`}>
+                          {tokenBalance?.balance ?? '0'}
+                        </p>
+                        <p className={`text-xs ${sub} mt-1`}>
+                          {walletValue === undefined
+                            ? 'Waiting for market price'
+                            : `~$${walletValue.toLocaleString(undefined, {
+                                maximumFractionDigits: 2,
+                              })}`}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {assets.map((asset) => (
                 <div key={asset.symbol} className={`${card} rounded-xl border p-6`}>
@@ -1102,6 +1347,18 @@ export default function RiskWhisperer() {
                     {[
                       { label: 'Current Price', value: asset.price },
                       { label: 'Portfolio Share', value: `${asset.allocation}%` },
+                      {
+                        label: 'Wallet Balance',
+                        value: asset.walletBalance
+                          ? `${asset.walletBalance} ${asset.symbol}`
+                          : walletAddress
+                            ? '0'
+                            : 'Not connected',
+                      },
+                      {
+                        label: 'Wallet Value',
+                        value: asset.walletValue ?? (walletAddress ? '—' : 'Not connected'),
+                      },
                       { label: 'Reference APY', value: asset.apy },
                       { label: 'Category', value: asset.category },
                     ].map((row) => (
