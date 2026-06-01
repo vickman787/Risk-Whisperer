@@ -40,7 +40,7 @@ export async function getOrCreatePortfolio(ownerKey: string) {
 
   const [portfolio] = await sql`
     INSERT INTO portfolio_state (owner_key, meth_allocation, usdy_allocation, total_value_usd)
-    VALUES (${ownerKey}, 0, 0, 0)
+    VALUES (${ownerKey}, 50, 50, 10000)
     RETURNING *
   `;
 

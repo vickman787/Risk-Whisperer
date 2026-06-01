@@ -22,6 +22,15 @@ type PortfolioState = {
   total_value_usd: number;
 };
 
+type RecentDecision = {
+  action: string;
+  from_asset: string;
+  to_asset: string;
+  reasoning: string;
+  risk_after: number;
+  created_at: string;
+};
+
 type ResearchSource = {
   label: string;
   category: 'Price' | 'Peg' | 'Liquidity' | 'Sentiment' | 'Leverage' | 'Portfolio';
@@ -53,6 +62,39 @@ function generateTxHash(): string {
 
 function formatPct(value: number): string {
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
+}
+
+function toNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizePortfolio(portfolio: PortfolioState): PortfolioState {
+  return {
+    ...portfolio,
+    meth_allocation: toNumber(portfolio.meth_allocation),
+    usdy_allocation: toNumber(portfolio.usdy_allocation),
+    total_value_usd: toNumber(portfolio.total_value_usd),
+  };
+}
+
+function isRecentTrade(decision: RecentDecision, now = Date.now()): boolean {
+  const createdAt = new Date(decision.created_at).getTime();
+  if (!Number.isFinite(createdAt)) return false;
+  return now - createdAt < 2 * 60 * 60 * 1000;
+}
+
+function forceHold(decision: AgentDecision, reason: string): AgentDecision {
+  return {
+    ...decision,
+    action: 'Hold',
+    from_asset: null,
+    to_asset: null,
+    amount: null,
+    reallocation_pct: 0,
+    confidence: Math.min(decision.confidence, 69),
+    reasoning: `${reason} ${decision.reasoning}`,
+  };
 }
 
 function buildResearchDossier(
@@ -138,15 +180,15 @@ export async function POST(request: Request) {
       throw new Error('OPENROUTER_API_KEY is not set');
     }
 
-    const portfolio = (await getOrCreatePortfolio(ownerKey)) as PortfolioState;
+    const portfolio = normalizePortfolio((await getOrCreatePortfolio(ownerKey)) as PortfolioState);
 
     const recentDecisions = await sql`
-      SELECT action, reasoning, risk_after, created_at
+      SELECT action, from_asset, to_asset, reasoning, risk_after, created_at
       FROM decisions
       WHERE owner_key = ${ownerKey}
       ORDER BY created_at DESC
       LIMIT 3
-    `;
+    ` as RecentDecision[];
 
     const recentContext =
       recentDecisions.length > 0
@@ -250,6 +292,27 @@ Autonomously research the evidence, then decide what to do. Output only the JSON
       decision = JSON.parse(jsonMatch[0]);
     } catch {
       throw new Error(`Failed to parse AI response: ${rawContent}`);
+    }
+
+    const latestTrade = recentDecisions.find(
+      (entry) => entry.action !== 'Hold' && entry.action !== 'Skipped'
+    );
+    const duplicatesLatestTrade =
+      latestTrade &&
+      latestTrade.action === decision.action &&
+      latestTrade.from_asset === (decision.from_asset ?? '-') &&
+      latestTrade.to_asset === (decision.to_asset ?? '-');
+
+    if (latestTrade && isRecentTrade(latestTrade)) {
+      decision = forceHold(
+        decision,
+        'Skipped duplicate execution: a non-hold recommendation was already made inside the 2-hour cooldown window.'
+      );
+    } else if (duplicatesLatestTrade) {
+      decision = forceHold(
+        decision,
+        'Skipped duplicate execution: the latest non-hold recommendation already used the same action and asset direction.'
+      );
     }
 
     let newMeth = portfolio.meth_allocation;
