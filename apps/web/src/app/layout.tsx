@@ -8,7 +8,7 @@ const LOGO_URL = 'https://raw.createusercontent.com/ef83fbea-b45f-4d4d-8f71-c23d
 export const metadata: Metadata = {
   title: 'Risk Whisperer — Mantle RWA AI Agent',
   description:
-    'Autonomous RWA risk manager powered by AI. Every decision recorded on Mantle. Monitor mETH and USDY in real-time with transparent on-chain reasoning.',
+    'Autonomous RWA risk manager powered by AI. Monitor mETH and USDY in real-time with transparent recommendation logs.',
   icons: {
     icon: LOGO_URL,
     apple: LOGO_URL,
@@ -16,7 +16,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Risk Whisperer — Mantle RWA AI Agent',
     description:
-      'Autonomous RWA risk manager. Every decision recorded on Mantle. Monitor mETH and USDY in real-time.',
+      'Autonomous RWA risk manager. Monitor mETH and USDY in real-time with transparent recommendation logs.',
     images: [
       {
         url: LOGO_URL,
@@ -31,7 +31,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'Risk Whisperer — Mantle RWA AI Agent',
     description:
-      'Autonomous RWA risk manager. Every decision recorded on Mantle. Monitor mETH and USDY in real-time.',
+      'Autonomous RWA risk manager. Monitor mETH and USDY in real-time with transparent recommendation logs.',
     images: [LOGO_URL],
   },
 };

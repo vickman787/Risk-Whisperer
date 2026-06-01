@@ -17,9 +17,9 @@ export async function GET() {
     return Response.json({
       decisions,
       portfolio: portfolio[0] ?? {
-        meth_allocation: 62,
-        usdy_allocation: 38,
-        total_value_usd: 77830,
+        meth_allocation: 0,
+        usdy_allocation: 0,
+        total_value_usd: 0,
       },
     });
   } catch (err) {

@@ -1,8 +1,8 @@
 CREATE TABLE IF NOT EXISTS portfolio_state (
   id SERIAL PRIMARY KEY,
-  meth_allocation NUMERIC NOT NULL DEFAULT 62,
-  usdy_allocation NUMERIC NOT NULL DEFAULT 38,
-  total_value_usd NUMERIC NOT NULL DEFAULT 77830,
+  meth_allocation NUMERIC NOT NULL DEFAULT 0,
+  usdy_allocation NUMERIC NOT NULL DEFAULT 0,
+  total_value_usd NUMERIC NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -24,5 +24,5 @@ CREATE TABLE IF NOT EXISTS decisions (
 );
 
 INSERT INTO portfolio_state (meth_allocation, usdy_allocation, total_value_usd)
-SELECT 62, 38, 77830
+SELECT 0, 0, 0
 WHERE NOT EXISTS (SELECT 1 FROM portfolio_state);

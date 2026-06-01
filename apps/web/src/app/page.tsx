@@ -9,7 +9,6 @@ import {
   Zap,
   Clock,
   ChevronRight,
-  ExternalLink,
   Wallet,
   BarChart3,
   Eye,
@@ -203,13 +202,18 @@ function RingChart({
 }
 
 function StatusPill({ status, dark }: { status: string; dark: boolean }) {
+  const displayStatus = status === 'Executed' ? 'Recommended' : status;
   const dot =
-    status === 'Executed' ? 'bg-green-500' : status === 'Skipped' ? 'bg-gray-400' : 'bg-yellow-500';
+    displayStatus === 'Recommended'
+      ? 'bg-green-500'
+      : displayStatus === 'Skipped'
+        ? 'bg-gray-400'
+        : 'bg-yellow-500';
   return (
     <span
       className={`inline-flex items-center gap-1.5 border rounded-full px-3 py-1 text-xs ${dark ? 'bg-[#262626] border-gray-700 text-gray-300' : 'bg-white border-gray-200 text-gray-700'}`}
     >
-      <span className={`w-1.5 h-1.5 rounded-full ${dot}`} /> {status}
+      <span className={`w-1.5 h-1.5 rounded-full ${dot}`} /> {displayStatus}
     </span>
   );
 }
@@ -403,14 +407,16 @@ export default function RiskWhisperer() {
 
   const decisions: Decision[] = decisionsData?.decisions ?? [];
   const portfolio: Portfolio = decisionsData?.portfolio ?? {
-    meth_allocation: 62,
-    usdy_allocation: 38,
-    total_value_usd: 77830,
+    meth_allocation: 0,
+    usdy_allocation: 0,
+    total_value_usd: 0,
   };
-  const latestRisk = decisions[0]?.risk_after ?? 54;
-  const prevRisk = decisions[1]?.risk_after ?? 68;
-  const executedToday = decisions.filter(
-    (d) => d.status === 'Executed' && d.created_at.slice(0, 10) === todayStr
+  const latestRisk = decisions[0]?.risk_after;
+  const prevRisk = decisions[1]?.risk_after;
+  const recommendedToday = decisions.filter(
+    (d) =>
+      (d.status === 'Recommended' || d.status === 'Executed') &&
+      d.created_at.slice(0, 10) === todayStr
   ).length;
   const methValue = Math.round(
     (portfolio.meth_allocation / 100) * Number(portfolio.total_value_usd)
@@ -418,9 +424,11 @@ export default function RiskWhisperer() {
   const usdyValue = Math.round(
     (portfolio.usdy_allocation / 100) * Number(portfolio.total_value_usd)
   );
+  const referenceMethApy = 4.8;
+  const referenceUsdyApy = 5.1;
   const blendedApy = (
-    (portfolio.meth_allocation / 100) * 4.8 +
-    (portfolio.usdy_allocation / 100) * 5.1
+    (portfolio.meth_allocation / 100) * referenceMethApy +
+    (portfolio.usdy_allocation / 100) * referenceUsdyApy
   ).toFixed(2);
   const annualYield = Math.round(
     (parseFloat(blendedApy) / 100) * Number(portfolio.total_value_usd)
@@ -432,7 +440,7 @@ export default function RiskWhisperer() {
       name: 'Mantle Staked Ether',
       allocation: portfolio.meth_allocation,
       value: `$${methValue.toLocaleString()}`,
-      apy: '4.8%',
+      apy: `${referenceMethApy}%`,
       risk: 'Medium',
       riskColor: 'bg-yellow-500',
       change: market ? `${market.ethChange >= 0 ? '+' : ''}${market.ethChange}%` : '—',
@@ -445,7 +453,7 @@ export default function RiskWhisperer() {
       name: 'Ondo US Dollar Yield',
       allocation: portfolio.usdy_allocation,
       value: `$${usdyValue.toLocaleString()}`,
-      apy: '5.1%',
+      apy: `${referenceUsdyApy}%`,
       risk: 'Low',
       riskColor: 'bg-green-500',
       change: market ? `${market.usdyChange >= 0 ? '+' : ''}${market.usdyChange}%` : '—',
@@ -455,7 +463,8 @@ export default function RiskWhisperer() {
     },
   ];
 
-  const riskLabel = latestRisk < 40 ? 'Low' : latestRisk < 65 ? 'Moderate' : 'High';
+  const riskLabel =
+    latestRisk === undefined ? 'No data' : latestRisk < 40 ? 'Low' : latestRisk < 65 ? 'Moderate' : 'High';
   const sentimentSub = market
     ? market.sentimentScore > 0.3
       ? 'Bullish'
@@ -586,7 +595,7 @@ export default function RiskWhisperer() {
         <div className="mb-8">
           <h1 className={`text-3xl font-semibold ${heading} tracking-tight`}>Risk Whisperer</h1>
           <p className={`${sub} text-sm mt-1`}>
-            Autonomous RWA risk manager — every decision recorded on Mantle.
+            Autonomous RWA risk manager — every recommendation logged with market context.
           </p>
         </div>
 
@@ -607,13 +616,13 @@ export default function RiskWhisperer() {
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className={`${card} rounded-xl border p-5`}>
-                <p className={`text-xs font-medium ${sub} mb-1`}>Total Portfolio</p>
+                <p className={`text-xs font-medium ${sub} mb-1`}>Model Portfolio</p>
                 <p className={`text-2xl font-semibold ${heading}`}>
                   ${Number(portfolio.total_value_usd).toLocaleString()}
                 </p>
                 <p className={`text-xs ${sub} mt-1 flex items-center gap-1`}>
                   <TrendingUp size={11} className="text-green-500" />
-                  {decisions.length} AI decisions made
+                  {decisions.length} AI recommendations logged
                 </p>
               </div>
               <div className={`${card} rounded-xl border p-5 flex items-center gap-4`}>
@@ -621,25 +630,29 @@ export default function RiskWhisperer() {
                   className="relative flex items-center justify-center"
                   style={{ width: 64, height: 64 }}
                 >
-                  <RingChart value={latestRisk} size={64} color="#EA580C" dark={dark} />
-                  <span className={`absolute text-xs font-semibold ${heading}`}>{latestRisk}%</span>
+                  <RingChart value={latestRisk ?? 0} size={64} color="#EA580C" dark={dark} />
+                  <span className={`absolute text-xs font-semibold ${heading}`}>
+                    {latestRisk === undefined ? '—' : `${latestRisk}%`}
+                  </span>
                 </div>
                 <div>
                   <p className={`text-xs font-medium ${sub} mb-0.5`}>Risk Score</p>
                   <p className={`text-sm font-semibold ${heading}`}>{riskLabel}</p>
                   <p className={`text-xs ${sub}`}>
-                    {latestRisk < prevRisk
-                      ? `↓ from ${prevRisk}%`
-                      : latestRisk > prevRisk
-                        ? `↑ from ${prevRisk}%`
-                        : 'Unchanged'}
+                    {latestRisk === undefined || prevRisk === undefined
+                      ? 'Run agent to generate risk'
+                      : latestRisk < prevRisk
+                        ? `↓ from ${prevRisk}%`
+                        : latestRisk > prevRisk
+                          ? `↑ from ${prevRisk}%`
+                          : 'Unchanged'}
                   </p>
                 </div>
               </div>
               <div className={`${card} rounded-xl border p-5`}>
                 <p className={`text-xs font-medium ${sub} mb-1`}>Actions Today</p>
-                <p className={`text-2xl font-semibold ${heading}`}>{executedToday}</p>
-                <p className={`text-xs ${sub} mt-1`}>autonomous executions</p>
+                <p className={`text-2xl font-semibold ${heading}`}>{recommendedToday}</p>
+                <p className={`text-xs ${sub} mt-1`}>recommendations today</p>
               </div>
               <div className={`${card} rounded-xl border p-5`}>
                 <p className={`text-xs font-medium ${sub} mb-1`}>Total Decisions</p>
@@ -690,7 +703,7 @@ export default function RiskWhisperer() {
                   ))}
                 </div>
                 <div className={`mt-6 pt-5 border-t ${innerDivider}`}>
-                  <p className={`text-xs ${sub} mb-2`}>Avg. Blended APY</p>
+                  <p className={`text-xs ${sub} mb-2`}>Est. Blended APY</p>
                   <p className={`text-xl font-semibold ${heading}`}>{blendedApy}%</p>
                   <p className={`text-xs ${sub} mt-0.5`}>
                     ≈ ${annualYield.toLocaleString()} / year
@@ -702,7 +715,7 @@ export default function RiskWhisperer() {
                 <div className="flex items-center justify-between mb-5">
                   <div>
                     <h2 className={`text-base font-semibold ${heading}`}>Recent Decisions</h2>
-                    <p className={`text-sm ${sub} mt-0.5`}>Live on-chain reasoning log</p>
+                    <p className={`text-sm ${sub} mt-0.5`}>Live AI reasoning log</p>
                   </div>
                   <button
                     onClick={() => setActiveTab('Risk Log')}
@@ -753,7 +766,7 @@ export default function RiskWhisperer() {
                             <span
                               className={`text-xs ${dark ? 'text-gray-500' : 'text-gray-400'} font-mono`}
                             >
-                              {entry.tx_hash}
+                              Sim {entry.tx_hash}
                             </span>
                           </div>
                         </div>
@@ -869,9 +882,9 @@ export default function RiskWhisperer() {
           <div className="space-y-3">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h2 className={`text-base font-semibold ${heading}`}>On-Chain Decision Log</h2>
+                <h2 className={`text-base font-semibold ${heading}`}>AI Decision Log</h2>
                 <p className={`text-sm ${sub} mt-0.5`}>
-                  Every action permanently recorded on the Mantle network
+                  Saved to the database with the market snapshot used by the agent
                 </p>
               </div>
               <span
@@ -925,7 +938,7 @@ export default function RiskWhisperer() {
                             <span
                               className={`font-mono text-xs ${dark ? 'text-gray-500' : 'text-gray-400'}`}
                             >
-                              {entry.tx_hash}
+                              Sim {entry.tx_hash}
                             </span>
                           </div>
                         </div>
@@ -988,7 +1001,7 @@ export default function RiskWhisperer() {
                               </div>
                             )}
                             <p className={`text-sm ${heading} font-medium`}>
-                              {entry.amount === '-' ? 'No trade executed' : entry.amount}
+                              {entry.amount === '-' ? 'No trade recommended' : entry.amount}
                             </p>
                           </div>
                           <div className="space-y-3">
@@ -1043,14 +1056,9 @@ export default function RiskWhisperer() {
                                 </p>
                               </div>
                             </div>
-                            <a
-                              href={`https://explorer.mantle.xyz/tx/${entry.tx_hash}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className={`inline-flex items-center gap-1 text-xs transition-colors duration-150 ${dark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}
-                            >
-                              View on Mantle Explorer <ExternalLink size={10} />
-                            </a>
+                            <p className={`text-xs ${sub}`}>
+                              Simulated ID: <span className="font-mono">{entry.tx_hash}</span>
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -1094,7 +1102,7 @@ export default function RiskWhisperer() {
                     {[
                       { label: 'Current Price', value: asset.price },
                       { label: 'Portfolio Share', value: `${asset.allocation}%` },
-                      { label: 'Current APY', value: asset.apy },
+                      { label: 'Reference APY', value: asset.apy },
                       { label: 'Category', value: asset.category },
                     ].map((row) => (
                       <div key={row.label} className="flex justify-between">
@@ -1130,7 +1138,7 @@ export default function RiskWhisperer() {
                   'USDY position must stay above 25% (safety floor)',
                   'Maximum single reallocation: 15%',
                   'Minimum confidence threshold to execute: 70%',
-                  'All decisions recorded on Mantle before execution',
+                  'Recommendations are saved before any future contract execution',
                   'Cooldown of 2 hours between consecutive trades',
                   'USDY peg deviation above 0.5% triggers emergency hold',
                   'mETH yield must be > 3.5% APY to maintain allocation',
@@ -1152,8 +1160,8 @@ export default function RiskWhisperer() {
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className={`${card} rounded-xl border p-6 md:col-span-1`}>
-                <h2 className={`text-base font-semibold ${heading} mb-1`}>ERC-8004 Identity NFT</h2>
-                <p className={`text-sm ${sub} mb-5`}>On-chain agent identity standard</p>
+                <h2 className={`text-base font-semibold ${heading} mb-1`}>Planned ERC-8004 Identity</h2>
+                <p className={`text-sm ${sub} mb-5`}>Ready for future on-chain agent identity</p>
                 <div
                   className={`aspect-square rounded-xl border flex flex-col items-center justify-center mb-5 relative overflow-hidden ${dark ? 'border-gray-700 bg-gradient-to-br from-blue-950 to-indigo-950' : 'border-gray-200 bg-gradient-to-br from-blue-50 to-indigo-100'}`}
                 >
@@ -1180,14 +1188,14 @@ export default function RiskWhisperer() {
                   <p className={`text-sm font-semibold ${heading} relative z-10`}>
                     RISK-WHISPERER-01
                   </p>
-                  <p className={`text-xs ${sub} relative z-10 mt-0.5`}>Token ID #00421</p>
+                  <p className={`text-xs ${sub} relative z-10 mt-0.5`}>Token ID pending</p>
                 </div>
                 <div className="space-y-3">
                   {[
                     { label: 'Standard', value: 'ERC-8004' },
                     { label: 'Network', value: 'Mantle Mainnet' },
-                    { label: 'Token ID', value: '#00421' },
-                    { label: 'Minted', value: 'May 24, 2025' },
+                    { label: 'Token ID', value: 'Pending' },
+                    { label: 'Minted', value: 'Not minted' },
                   ].map((row) => (
                     <div key={row.label} className="flex justify-between items-center">
                       <span className={`text-xs ${sub}`}>{row.label}</span>
@@ -1203,7 +1211,7 @@ export default function RiskWhisperer() {
                 <div className={`${card} rounded-xl border p-6`}>
                   <h2 className={`text-base font-semibold ${heading} mb-1`}>Agent Reputation</h2>
                   <p className={`text-sm ${sub} mb-5`}>
-                    On-chain performance record — permanent and verifiable
+                    Database-backed performance record for the AI strategy
                   </p>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                     {[
@@ -1213,19 +1221,23 @@ export default function RiskWhisperer() {
                         info: 'lifetime actions',
                       },
                       {
-                        label: 'Executed Rate',
+                        label: 'Recommended Rate',
                         value:
                           decisions.length > 0
-                            ? `${Math.round((decisions.filter((d) => d.status === 'Executed').length / decisions.length) * 100)}%`
+                            ? `${Math.round((decisions.filter((d) => d.status === 'Recommended' || d.status === 'Executed').length / decisions.length) * 100)}%`
                             : '—',
-                        info: 'decisions executed',
+                        info: 'decisions recommended',
                       },
                       {
                         label: 'Risk Reductions',
                         value: String(decisions.filter((d) => d.risk_after < d.risk_before).length),
                         info: 'adverse moves avoided',
                       },
-                      { label: 'Latest Risk', value: `${latestRisk}%`, info: 'current risk score' },
+                      {
+                        label: 'Latest Risk',
+                        value: latestRisk === undefined ? '—' : `${latestRisk}%`,
+                        info: latestRisk === undefined ? 'no decision yet' : 'current risk score',
+                      },
                       {
                         label: 'Avg Confidence',
                         value:
@@ -1236,8 +1248,8 @@ export default function RiskWhisperer() {
                       },
                       {
                         label: 'Actions Today',
-                        value: String(executedToday),
-                        info: "today's executions",
+                        value: String(recommendedToday),
+                        info: "today's recommendations",
                       },
                     ].map((stat) => (
                       <div key={stat.label} className={`border ${signalCard} rounded-xl p-4`}>
@@ -1252,13 +1264,13 @@ export default function RiskWhisperer() {
                 <div className={`${card} rounded-xl border p-6`}>
                   <h2 className={`text-base font-semibold ${heading} mb-1`}>Agent Achievements</h2>
                   <p className={`text-sm ${sub} mb-5`}>
-                    Milestones recorded on the Mantle blockchain
+                    Milestones from saved agent decisions
                   </p>
                   <div className="space-y-2">
                     {[
                       {
                         badge: '🛡️ First Shield',
-                        desc: 'First successful risk reduction executed on-chain',
+                        desc: 'First successful risk reduction recommended',
                         unlocked: decisions.some((d) => d.risk_after < d.risk_before),
                       },
                       {
@@ -1268,16 +1280,16 @@ export default function RiskWhisperer() {
                       },
                       {
                         badge: '🎯 Precision Agent',
-                        desc: 'Maintained 80%+ execution rate',
+                        desc: 'Maintained 80%+ recommendation rate',
                         unlocked:
                           decisions.length > 0 &&
-                          decisions.filter((d) => d.status === 'Executed').length /
+                          decisions.filter((d) => d.status === 'Recommended' || d.status === 'Executed').length /
                             decisions.length >=
                             0.8,
                       },
                       {
                         badge: '📡 Radical Transparency',
-                        desc: 'All reasoning logs verified and publicly indexed',
+                        desc: 'All reasoning logs saved and indexed in the app',
                         unlocked: decisions.length > 0,
                       },
                     ].map((a) => (

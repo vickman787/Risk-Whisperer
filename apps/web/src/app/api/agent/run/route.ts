@@ -21,9 +21,9 @@ export async function POST(request: Request) {
     // 2. Get current portfolio state
     const portfolioRows = await sql`SELECT * FROM portfolio_state ORDER BY id DESC LIMIT 1`;
     const portfolio = portfolioRows[0] ?? {
-      meth_allocation: 62,
-      usdy_allocation: 38,
-      total_value_usd: 77830,
+      meth_allocation: 0,
+      usdy_allocation: 0,
+      total_value_usd: 0,
     };
 
     // 3. Get last 3 decisions for context
@@ -45,9 +45,9 @@ export async function POST(request: Request) {
         : 'No previous decisions yet.';
 
     // 4. Build the AI prompt
-    const systemPrompt = `You are Risk Whisperer — an autonomous AI risk manager for a DeFi portfolio on the Mantle blockchain. You manage two assets:
-- mETH (Mantle Staked Ether): currently ${portfolio.meth_allocation}% of portfolio. Medium risk, yields ~4.8% APY.
-- USDY (Ondo US Dollar Yield): currently ${portfolio.usdy_allocation}% of portfolio. Low risk, yields ~5.1% APY. Backed by US Treasuries.
+    const systemPrompt = `You are Risk Whisperer — an autonomous AI risk manager for a DeFi portfolio focused on Mantle RWA assets. You manage two assets:
+- mETH (Mantle Staked Ether): currently ${portfolio.meth_allocation}% of portfolio. Medium risk, reference yield ~4.8% APY.
+- USDY (Ondo US Dollar Yield): currently ${portfolio.usdy_allocation}% of portfolio. Low risk, reference yield ~5.1% APY. Backed by US Treasuries.
 
 Your rules:
 - mETH must stay between 40% and 75%
@@ -182,13 +182,13 @@ Analyse the market signals and decide what to do. Output only the JSON.`;
         ${riskBefore},
         ${riskAfter},
         ${decision.confidence},
-        ${decision.confidence >= 70 ? 'Executed' : 'Skipped'},
+        ${decision.confidence >= 70 ? 'Recommended' : 'Skipped'},
         ${JSON.stringify(market)}
       )
       RETURNING *
     `;
 
-    // 9. Update portfolio if executed
+    // 9. Update the model portfolio if the recommendation clears the threshold
     if (decision.confidence >= 70 && decision.action !== 'Hold') {
       await sql`
         UPDATE portfolio_state
