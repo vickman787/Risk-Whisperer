@@ -40,6 +40,16 @@ type EthereumProvider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+  providers?: EthereumProvider[];
+  isMetaMask?: boolean;
+  isRabby?: boolean;
+};
+
+type WalletOption = {
+  id: string;
+  name: string;
+  logo: string;
+  provider?: EthereumProvider;
 };
 
 declare global {
@@ -77,6 +87,33 @@ function fmtTime(iso: string): string {
 
 function shortAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function walletLogoClass(id: string): string {
+  if (id === 'metamask') return 'bg-orange-500 text-white';
+  if (id === 'rabby') return 'bg-blue-500 text-white';
+  return 'bg-gray-700 text-white';
+}
+
+function getWalletOptions(): WalletOption[] {
+  if (typeof window === 'undefined' || !window.ethereum) {
+    return [
+      { id: 'metamask', name: 'MetaMask', logo: 'M' },
+      { id: 'rabby', name: 'Rabby', logo: 'R' },
+      { id: 'injected', name: 'Injected', logo: 'I' },
+    ];
+  }
+
+  const providers = window.ethereum.providers ?? [window.ethereum];
+  const metamask = providers.find((provider) => provider.isMetaMask && !provider.isRabby);
+  const rabby = providers.find((provider) => provider.isRabby);
+  const injected = window.ethereum;
+
+  return [
+    { id: 'metamask', name: 'MetaMask', logo: 'M', provider: metamask },
+    { id: 'rabby', name: 'Rabby', logo: 'R', provider: rabby },
+    { id: 'injected', name: 'Injected', logo: 'I', provider: injected },
+  ];
 }
 
 interface Decision {
@@ -209,6 +246,8 @@ export default function RiskWhisperer() {
   const [agentError, setAgentError] = useState<string | null>(null);
   const [walletAddress, setWalletAddress] = useState('');
   const [walletError, setWalletError] = useState<string | null>(null);
+  const [walletMenuOpen, setWalletMenuOpen] = useState(false);
+  const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
   const [todayStr, setTodayStr] = useState('');
   const qc = useQueryClient();
 
@@ -218,6 +257,7 @@ export default function RiskWhisperer() {
     const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (savedTheme === 'dark') setDark(true);
     if (savedTheme === 'light') setDark(false);
+    setWalletOptions(getWalletOptions());
   }, []);
 
   function toggleTheme() {
@@ -282,11 +322,11 @@ export default function RiskWhisperer() {
     }
   }
 
-  async function connectWallet() {
+  async function connectWallet(option: WalletOption) {
     setWalletError(null);
-    const ethereum = window.ethereum;
+    const ethereum = option.provider;
     if (!ethereum) {
-      setWalletError('Install MetaMask, Rabby, or another EVM wallet to connect.');
+      setWalletError(`Install or unlock ${option.name} to connect.`);
       return;
     }
 
@@ -294,9 +334,23 @@ export default function RiskWhisperer() {
       const accounts = (await ethereum.request({ method: 'eth_requestAccounts' })) as string[];
       setWalletAddress(accounts[0] ?? '');
       await switchToMantle(ethereum);
+      setWalletMenuOpen(false);
     } catch (err) {
       setWalletError(err instanceof Error ? err.message : 'Wallet connection failed');
     }
+  }
+
+  async function copyWalletAddress() {
+    if (!walletAddress) return;
+    await navigator.clipboard.writeText(walletAddress);
+    setWalletError('Address copied');
+    setWalletMenuOpen(false);
+  }
+
+  function disconnectWallet() {
+    setWalletAddress('');
+    setWalletError(null);
+    setWalletMenuOpen(false);
   }
 
   const { data: decisionsData, isLoading: decisionsLoading } = useQuery({
@@ -435,19 +489,70 @@ export default function RiskWhisperer() {
               <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
               Agent Active
             </span>
-            <button
-              onClick={connectWallet}
-              className={`inline-flex border rounded-full px-3 py-1 text-xs items-center gap-1.5 transition-colors duration-150 ${pillBg} ${dark ? 'hover:bg-gray-700' : 'hover:bg-gray-50'}`}
-              title={walletError ?? (walletAddress ? 'Connected to Mantle wallet' : 'Connect wallet')}
-            >
-              <Wallet size={10} />
-              {walletAddress ? shortAddress(walletAddress) : (
-                <>
-                  <span className="hidden sm:inline">Connect</span>
-                  Wallet
-                </>
+            <div className="relative">
+              <button
+                onClick={() => setWalletMenuOpen((open) => !open)}
+                className={`inline-flex border rounded-full px-3 py-1 text-xs items-center gap-1.5 transition-colors duration-150 ${pillBg} ${dark ? 'hover:bg-gray-700' : 'hover:bg-gray-50'}`}
+                title={walletError ?? (walletAddress ? 'Connected wallet' : 'Connect wallet')}
+              >
+                <Wallet size={10} />
+                {walletAddress ? shortAddress(walletAddress) : (
+                  <>
+                    <span className="hidden sm:inline">Connect</span>
+                    Wallet
+                  </>
+                )}
+              </button>
+              {walletMenuOpen && (
+                <div
+                  className={`absolute right-0 mt-2 w-56 rounded-xl border p-2 shadow-xl z-30 ${dark ? 'bg-[#1E1E1E] border-gray-700' : 'bg-white border-gray-200'}`}
+                >
+                  {walletAddress ? (
+                    <>
+                      <div className={`px-3 py-2 text-xs border-b mb-1 ${dark ? 'border-gray-700 text-gray-300' : 'border-gray-100 text-gray-600'}`}>
+                        Connected: {shortAddress(walletAddress)}
+                      </div>
+                      <button
+                        onClick={copyWalletAddress}
+                        className={`w-full text-left rounded-lg px-3 py-2 text-sm transition-colors ${dark ? 'hover:bg-gray-800 text-gray-200' : 'hover:bg-gray-50 text-gray-800'}`}
+                      >
+                        Copy address
+                      </button>
+                      <button
+                        onClick={disconnectWallet}
+                        className={`w-full text-left rounded-lg px-3 py-2 text-sm transition-colors ${dark ? 'hover:bg-gray-800 text-red-400' : 'hover:bg-gray-50 text-red-600'}`}
+                      >
+                        Disconnect
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p className={`px-3 py-2 text-xs ${sub}`}>Choose wallet</p>
+                      {walletOptions.map((option) => (
+                        <button
+                          key={option.id}
+                          onClick={() => connectWallet(option)}
+                          className={`w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${dark ? 'hover:bg-gray-800 text-gray-200' : 'hover:bg-gray-50 text-gray-800'}`}
+                        >
+                          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${walletLogoClass(option.id)}`}>
+                            {option.logo}
+                          </span>
+                          <span>{option.name}</span>
+                          {!option.provider && (
+                            <span className={`ml-auto text-[10px] ${sub}`}>Not found</span>
+                          )}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                  {walletError && (
+                    <p className={`px-3 pt-2 text-[11px] ${walletError === 'Address copied' ? 'text-green-500' : 'text-red-500'}`}>
+                      {walletError}
+                    </p>
+                  )}
+                </div>
               )}
-            </button>
+            </div>
             <button
               onClick={toggleTheme}
               className={`w-8 h-8 rounded-full flex items-center justify-center border transition-colors duration-150 ${dark ? 'bg-[#262626] border-gray-700 text-gray-300 hover:bg-gray-700' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
