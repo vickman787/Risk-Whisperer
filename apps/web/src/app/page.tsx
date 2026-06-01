@@ -49,6 +49,7 @@ type EthereumProvider = {
 type WalletOption = {
   id: string;
   name: string;
+  iconUrl?: string;
   provider?: EthereumProvider;
 };
 
@@ -92,31 +93,13 @@ function shortAddress(address: string): string {
 function WalletLogo({ id }: { id: string }) {
   if (id === 'metamask') {
     return (
-      <svg viewBox="0 0 32 32" className="w-7 h-7" aria-hidden="true">
-        <path fill="#F6851B" d="M4 5l9 7-2 4-6-2z" />
-        <path fill="#E2761B" d="M28 5l-9 7 2 4 6-2z" />
-        <path fill="#F6851B" d="M11 17l-3 9 6-3 2-5z" />
-        <path fill="#E2761B" d="M21 17l3 9-6-3-2-5z" />
-        <path fill="#763D16" d="M13 12h6l2 5-5 2-5-2z" />
-        <path fill="#FBB03B" d="M8 14l5 3-2 3-4-1zM24 14l-5 3 2 3 4-1z" />
-        <path fill="#111827" d="M11 19l3 1-2 2zM21 19l-3 1 2 2z" />
-        <path fill="#C0AD9E" d="M14 23h4l-2 2z" />
-      </svg>
+      <img src="/wallets/metamask.svg" alt="" className="w-7 h-7 object-contain" />
     );
   }
 
   if (id === 'rabby') {
     return (
-      <svg viewBox="0 0 32 32" className="w-7 h-7" aria-hidden="true">
-        <circle cx="16" cy="16" r="13" fill="#6F7DFB" />
-        <path
-          fill="#FFFFFF"
-          d="M11 12c-1-3 1-6 3-3l2 3 2-3c2-3 4 0 3 3 3 1 5 4 3 7-1 3-4 5-8 5s-7-2-8-5c-2-3 0-6 3-7z"
-        />
-        <path fill="#DDE3FF" d="M10 18c3-2 7-2 12 0-1 2-3 4-6 4s-5-2-6-4z" />
-        <circle cx="13" cy="15" r="1" fill="#4250C8" />
-        <circle cx="19" cy="15" r="1" fill="#4250C8" />
-      </svg>
+      <img src="/wallets/rabby.svg" alt="" className="w-7 h-7 object-contain" />
     );
   }
 
@@ -126,8 +109,8 @@ function WalletLogo({ id }: { id: string }) {
 function getWalletOptions(): WalletOption[] {
   if (typeof window === 'undefined' || !window.ethereum) {
     return [
-      { id: 'metamask', name: 'MetaMask' },
-      { id: 'rabby', name: 'Rabby Wallet' },
+      { id: 'metamask', name: 'MetaMask', iconUrl: '/wallets/metamask.svg' },
+      { id: 'rabby', name: 'Rabby Wallet', iconUrl: '/wallets/rabby.svg' },
       { id: 'injected', name: 'Injected' },
     ];
   }
@@ -138,8 +121,8 @@ function getWalletOptions(): WalletOption[] {
   const injected = window.ethereum;
 
   return [
-    { id: 'metamask', name: 'MetaMask', provider: metamask },
-    { id: 'rabby', name: 'Rabby Wallet', provider: rabby },
+    { id: 'metamask', name: 'MetaMask', iconUrl: '/wallets/metamask.svg', provider: metamask },
+    { id: 'rabby', name: 'Rabby Wallet', iconUrl: '/wallets/rabby.svg', provider: rabby },
     { id: 'injected', name: 'Injected', provider: injected },
   ];
 }
