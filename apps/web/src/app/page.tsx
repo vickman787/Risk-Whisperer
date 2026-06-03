@@ -25,6 +25,7 @@ const LOGO_URL = 'https://raw.createusercontent.com/ef83fbea-b45f-4d4d-8f71-c23d
 const TABS = ['Overview', 'Risk Log', 'Assets', 'Agent Identity'];
 const THEME_STORAGE_KEY = 'risk-whisperer-theme';
 const OWNER_STORAGE_KEY = 'risk-whisperer-owner-key';
+const WALLET_CONNECTED_STORAGE_KEY = 'risk-whisperer-wallet-connected';
 const MANTLE_CHAIN_ID = '0x1388';
 const MANTLE_CHAIN_PARAMS = {
   chainId: MANTLE_CHAIN_ID,
@@ -385,7 +386,26 @@ export default function RiskWhisperer() {
     const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (savedTheme === 'dark') setDark(true);
     if (savedTheme === 'light') setDark(false);
-    setWalletOptions(getWalletOptions());
+    const options = getWalletOptions();
+    setWalletOptions(options);
+
+    if (window.localStorage.getItem(WALLET_CONNECTED_STORAGE_KEY) === 'true') {
+      void Promise.all(
+        options.map(async (option) => {
+          if (!option.provider) return null;
+          const accounts = (await option.provider.request({ method: 'eth_accounts' })) as string[];
+          const account = accounts[0];
+          return account ? { account, provider: option.provider } : null;
+        })
+      )
+        .then((matches) => {
+          const restored = matches.find(Boolean);
+          if (!restored) return;
+          setWalletAddress(restored.account);
+          setConnectedWalletProvider(restored.provider);
+        })
+        .catch(() => undefined);
+    }
   }, []);
 
   function toggleTheme() {
@@ -452,6 +472,7 @@ export default function RiskWhisperer() {
       const accounts = (await ethereum.request({ method: 'eth_requestAccounts' })) as string[];
       setWalletAddress(accounts[0] ?? '');
       setConnectedWalletProvider(ethereum);
+      window.localStorage.setItem(WALLET_CONNECTED_STORAGE_KEY, 'true');
       await switchToMantle(ethereum);
       qc.invalidateQueries({ queryKey: ['wallet-balances'] });
       setWalletMenuOpen(false);
@@ -470,6 +491,7 @@ export default function RiskWhisperer() {
   function disconnectWallet() {
     setWalletAddress('');
     setConnectedWalletProvider(null);
+    window.localStorage.removeItem(WALLET_CONNECTED_STORAGE_KEY);
     setWalletError(null);
     setWalletMenuOpen(false);
     qc.invalidateQueries({ queryKey: ['wallet-balances'] });
@@ -588,28 +610,18 @@ export default function RiskWhisperer() {
       (d.status === 'Recommended' || d.status === 'Executed') &&
       d.created_at.slice(0, 10) === todayStr
   ).length;
-  const methValue = Math.round(
-    (portfolio.meth_allocation / 100) * Number(portfolio.total_value_usd)
-  );
-  const usdyValue = Math.round(
-    (portfolio.usdy_allocation / 100) * Number(portfolio.total_value_usd)
-  );
   const referenceMethApy = 4.8;
   const referenceUsdyApy = 5.1;
   const blendedApy = (
     (portfolio.meth_allocation / 100) * referenceMethApy +
     (portfolio.usdy_allocation / 100) * referenceUsdyApy
   ).toFixed(2);
-  const annualYield = Math.round(
-    (parseFloat(blendedApy) / 100) * Number(portfolio.total_value_usd)
-  );
 
   const assets = [
     {
       symbol: 'mETH',
       name: 'Mantle Staked Ether',
       allocation: portfolio.meth_allocation,
-      value: `$${methValue.toLocaleString()}`,
       apy: `${referenceMethApy}%`,
       risk: 'Medium',
       riskColor: 'bg-yellow-500',
@@ -630,7 +642,6 @@ export default function RiskWhisperer() {
       symbol: 'USDY',
       name: 'Ondo US Dollar Yield',
       allocation: portfolio.usdy_allocation,
-      value: `$${usdyValue.toLocaleString()}`,
       apy: `${referenceUsdyApy}%`,
       risk: 'Low',
       riskColor: 'bg-green-500',
@@ -804,18 +815,7 @@ export default function RiskWhisperer() {
         {/* OVERVIEW */}
         {activeTab === 'Overview' && (
           <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className={`${card} rounded-xl border p-5`}>
-                <p className={`text-xs font-medium ${sub} mb-1`}>Simulated Portfolio</p>
-                <p className={`text-2xl font-semibold ${heading}`}>
-                  ${Number(portfolio.total_value_usd).toLocaleString()}
-                </p>
-                <p className={`text-xs ${sub} mt-1`}>Demo value, not wallet funds</p>
-                <p className={`text-xs ${sub} mt-1 flex items-center gap-1`}>
-                  <TrendingUp size={11} className="text-green-500" />
-                  {decisions.length} AI recommendations logged
-                </p>
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className={`${card} rounded-xl border p-5 flex items-center gap-4`}>
                 <div
                   className="relative flex items-center justify-center"
@@ -883,7 +883,7 @@ export default function RiskWhisperer() {
                         />
                       </div>
                       <div className="flex justify-between mt-1">
-                        <span className={`text-xs ${sub}`}>{asset.value}</span>
+                        <span className={`text-xs ${sub}`}>Reference APY {asset.apy}</span>
                         <span
                           className={`text-xs ${asset.positive ? 'text-green-600' : 'text-red-500'}`}
                         >
@@ -897,7 +897,7 @@ export default function RiskWhisperer() {
                   <p className={`text-xs ${sub} mb-2`}>Est. Blended APY</p>
                   <p className={`text-xl font-semibold ${heading}`}>{blendedApy}%</p>
                   <p className={`text-xs ${sub} mt-0.5`}>
-                    ≈ ${annualYield.toLocaleString()} / year
+                    Based on the model allocation split
                   </p>
                 </div>
               </div>
@@ -1446,7 +1446,7 @@ export default function RiskWhisperer() {
                       <p className={`text-sm ${sub}`}>{asset.name}</p>
                     </div>
                     <div className="text-right">
-                      <p className={`text-lg font-semibold ${heading}`}>{asset.value}</p>
+                      <p className={`text-lg font-semibold ${heading}`}>{asset.allocation}%</p>
                       <p
                         className={`text-sm ${asset.positive ? 'text-green-600' : 'text-red-500'}`}
                       >
