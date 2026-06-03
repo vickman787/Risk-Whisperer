@@ -370,6 +370,7 @@ export default function RiskWhisperer() {
   const [dark, setDark] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
   const [walletAddress, setWalletAddress] = useState('');
+  const [connectedWalletProvider, setConnectedWalletProvider] = useState<EthereumProvider | null>(null);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
   const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
@@ -396,25 +397,15 @@ export default function RiskWhisperer() {
   }
 
   useEffect(() => {
-    const ethereum = window.ethereum;
-    if (!ethereum) return;
-
-    ethereum
-      .request({ method: 'eth_accounts' })
-      .then((accounts) => {
-        const [account] = accounts as string[];
-        if (account) setWalletAddress(account);
-      })
-      .catch(() => undefined);
-
+    if (!connectedWalletProvider) return;
     const handleAccountsChanged = (...args: unknown[]) => {
       const [accounts] = args as [string[]];
       setWalletAddress(accounts?.[0] ?? '');
     };
 
-    ethereum.on?.('accountsChanged', handleAccountsChanged);
-    return () => ethereum.removeListener?.('accountsChanged', handleAccountsChanged);
-  }, []);
+    connectedWalletProvider.on?.('accountsChanged', handleAccountsChanged);
+    return () => connectedWalletProvider.removeListener?.('accountsChanged', handleAccountsChanged);
+  }, [connectedWalletProvider]);
 
   const bg = dark ? 'bg-[#121212]' : 'bg-[#F9FAFB]';
   const card = dark ? 'bg-[#1E1E1E] border-gray-800' : 'bg-white border-gray-200';
@@ -460,6 +451,7 @@ export default function RiskWhisperer() {
     try {
       const accounts = (await ethereum.request({ method: 'eth_requestAccounts' })) as string[];
       setWalletAddress(accounts[0] ?? '');
+      setConnectedWalletProvider(ethereum);
       await switchToMantle(ethereum);
       qc.invalidateQueries({ queryKey: ['wallet-balances'] });
       setWalletMenuOpen(false);
@@ -477,6 +469,7 @@ export default function RiskWhisperer() {
 
   function disconnectWallet() {
     setWalletAddress('');
+    setConnectedWalletProvider(null);
     setWalletError(null);
     setWalletMenuOpen(false);
     qc.invalidateQueries({ queryKey: ['wallet-balances'] });
@@ -511,10 +504,10 @@ export default function RiskWhisperer() {
     error: walletBalancesError,
   } = useQuery({
     queryKey: ['wallet-balances', walletAddress],
-    enabled: Boolean(walletAddress),
+    enabled: Boolean(walletAddress && connectedWalletProvider),
     retry: false,
     queryFn: async () => {
-      const ethereum = window.ethereum;
+      const ethereum = connectedWalletProvider;
       if (!ethereum) throw new Error('No wallet provider found');
 
       const chainId = (await ethereum.request({ method: 'eth_chainId' })) as string;
@@ -813,10 +806,11 @@ export default function RiskWhisperer() {
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className={`${card} rounded-xl border p-5`}>
-                <p className={`text-xs font-medium ${sub} mb-1`}>Model Portfolio</p>
+                <p className={`text-xs font-medium ${sub} mb-1`}>Simulated Portfolio</p>
                 <p className={`text-2xl font-semibold ${heading}`}>
                   ${Number(portfolio.total_value_usd).toLocaleString()}
                 </p>
+                <p className={`text-xs ${sub} mt-1`}>Demo value, not wallet funds</p>
                 <p className={`text-xs ${sub} mt-1 flex items-center gap-1`}>
                   <TrendingUp size={11} className="text-green-500" />
                   {decisions.length} AI recommendations logged
