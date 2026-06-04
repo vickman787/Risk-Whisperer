@@ -1,6 +1,7 @@
 const ETH_KEY = 'coingecko:ethereum';
 const METH_KEY = 'mantle:0xcDA86A272531e8640cD7F1a92c01839911B90bb0';
 const USDY_KEY = 'mantle:0x5bE26527e817998A7206475496fDE1E68957c5A6';
+const COINGECKO_IDS = 'ethereum,mantle-staked-ether,ondo-us-dollar-yield';
 
 async function readChartChange(
   result: PromiseSettledResult<Response>,
@@ -19,6 +20,11 @@ async function readChartChange(
 
 function round(value: number | null, digits = 2): number | null {
   return value === null ? null : parseFloat(value.toFixed(digits));
+}
+
+function readNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function readMantleChainChange(chains: { name?: string; change_1d?: number }[]): number | null {
@@ -48,6 +54,7 @@ function readHyperliquidEthFunding(payload: unknown): number | null {
 export async function GET() {
   try {
     const [
+      coingeckoRes,
       priceRes,
       ethChartRes,
       methChartRes,
@@ -58,6 +65,10 @@ export async function GET() {
       binanceRes,
       hyperliquidRes,
     ] = await Promise.allSettled([
+        fetch(
+          `https://api.coingecko.com/api/v3/simple/price?ids=${COINGECKO_IDS}&vs_currencies=usd&include_24hr_change=true`,
+          { next: { revalidate: 60 } }
+        ),
         fetch(`https://coins.llama.fi/prices/current/${ETH_KEY},${METH_KEY},${USDY_KEY}`, {
           next: { revalidate: 60 },
         }),
@@ -87,18 +98,35 @@ export async function GET() {
     let ethPrice: number | null = null;
     let methPrice: number | null = null;
     let usdyPrice: number | null = null;
+    let ethChange: number | null = null;
+    let methChange: number | null = null;
+    let usdyChange: number | null = null;
 
-    if (priceRes.status === 'fulfilled' && priceRes.value.ok) {
-      const prices = await priceRes.value.json();
-      const coins = prices?.coins ?? {};
-      ethPrice = coins[ETH_KEY]?.price ?? null;
-      methPrice = coins[METH_KEY]?.price ?? null;
-      usdyPrice = coins[USDY_KEY]?.price ?? null;
+    if (coingeckoRes.status === 'fulfilled' && coingeckoRes.value.ok) {
+      const coingecko = await coingeckoRes.value.json();
+      ethPrice = readNumber(coingecko?.ethereum?.usd);
+      ethChange = readNumber(coingecko?.ethereum?.usd_24h_change);
+      methPrice = readNumber(coingecko?.['mantle-staked-ether']?.usd);
+      methChange = readNumber(coingecko?.['mantle-staked-ether']?.usd_24h_change);
+      usdyPrice = readNumber(coingecko?.['ondo-us-dollar-yield']?.usd);
+      usdyChange = readNumber(coingecko?.['ondo-us-dollar-yield']?.usd_24h_change);
     }
 
-    const ethChange = await readChartChange(ethChartRes, ETH_KEY);
-    const methChange = await readChartChange(methChartRes, METH_KEY);
-    const usdyChange = await readChartChange(usdyChartRes, USDY_KEY);
+    if (
+      (ethPrice === null || methPrice === null || usdyPrice === null) &&
+      priceRes.status === 'fulfilled' &&
+      priceRes.value.ok
+    ) {
+      const prices = await priceRes.value.json();
+      const coins = prices?.coins ?? {};
+      ethPrice = ethPrice ?? coins[ETH_KEY]?.price ?? null;
+      methPrice = methPrice ?? coins[METH_KEY]?.price ?? null;
+      usdyPrice = usdyPrice ?? coins[USDY_KEY]?.price ?? null;
+    }
+
+    ethChange = ethChange ?? (await readChartChange(ethChartRes, ETH_KEY));
+    methChange = methChange ?? (await readChartChange(methChartRes, METH_KEY));
+    usdyChange = usdyChange ?? (await readChartChange(usdyChartRes, USDY_KEY));
 
     let mantleTvlChange: number | null = null;
     if (llamaChainsRes.status === 'fulfilled' && llamaChainsRes.value.ok) {
@@ -133,8 +161,7 @@ export async function GET() {
       fundingRate = readHyperliquidEthFunding(await hyperliquidRes.value.json());
     }
 
-    const usdyPegDeviation =
-      usdyPrice === null ? null : parseFloat(Math.abs(usdyPrice - 1.0).toFixed(4));
+    const usdyPegDeviation = null;
 
     return Response.json({
       ethPrice,
