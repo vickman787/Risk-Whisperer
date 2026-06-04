@@ -73,7 +73,7 @@ declare global {
   }
 }
 
-// Pure ISO string formatters â€” no new Date() so no hydration mismatch
+// Pure ISO string formatters - no new Date() so no hydration mismatch
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function fmtDate(iso: string): string {
@@ -101,12 +101,12 @@ function fmtTime(iso: string): string {
 }
 
 function fmtCurrency(value: number | null | undefined, maxDecimals = 2): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return 'â€”';
+  if (value === null || value === undefined || !Number.isFinite(value)) return '-';
   return `$${value.toLocaleString(undefined, { maximumFractionDigits: maxDecimals })}`;
 }
 
 function fmtPercent(value: number | null | undefined, maxDecimals = 2): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return 'â€”';
+  if (value === null || value === undefined || !Number.isFinite(value)) return '-';
   return `${value >= 0 ? '+' : ''}${value.toLocaleString(undefined, {
     maximumFractionDigits: maxDecimals,
   })}%`;
@@ -668,7 +668,7 @@ export default function RiskWhisperer() {
       : market.sentimentScore < -0.3
         ? 'Bearish'
         : 'Neutral'
-    : 'â€”';
+    : '-';
 
   return (
     <div className={`min-h-screen ${bg} font-inter transition-colors duration-200`}>
@@ -786,7 +786,7 @@ export default function RiskWhisperer() {
         {agentError && (
           <div className="max-w-6xl mx-auto mt-2">
             <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-              âš  {agentError}
+              ! {agentError}
             </p>
           </div>
         )}
@@ -796,7 +796,7 @@ export default function RiskWhisperer() {
         <div className="mb-8">
           <h1 className={`text-3xl font-semibold ${heading} tracking-tight`}>Risk Whisperer</h1>
           <p className={`${sub} text-sm mt-1`}>
-            Autonomous RWA risk manager â€” every recommendation logged with market context.
+            Autonomous RWA risk manager - every recommendation logged with market context.
           </p>
         </div>
 
@@ -823,7 +823,7 @@ export default function RiskWhisperer() {
                 >
                   <RingChart value={latestRisk ?? 0} size={64} color="#EA580C" dark={dark} />
                   <span className={`absolute text-xs font-semibold ${heading}`}>
-                    {latestRisk === undefined ? 'â€”' : `${latestRisk}%`}
+                    {latestRisk === undefined ? '-' : `${latestRisk}%`}
                   </span>
                 </div>
                 <div>
@@ -833,9 +833,9 @@ export default function RiskWhisperer() {
                     {latestRisk === undefined || prevRisk === undefined
                       ? 'Run agent to generate risk'
                       : latestRisk < prevRisk
-                        ? `â†“ from ${prevRisk}%`
+                        ? `down from ${prevRisk}%`
                         : latestRisk > prevRisk
-                          ? `â†‘ from ${prevRisk}%`
+                          ? `up from ${prevRisk}%`
                           : 'Unchanged'}
                   </p>
                 </div>
@@ -977,7 +977,7 @@ export default function RiskWhisperer() {
                 {[
                   {
                     label: 'ETH Funding Rate',
-                    value: marketLoading ? '—' : fmtPercent(market?.fundingRate, 4),
+                    value: marketLoading ? '-' : fmtPercent(market?.fundingRate, 4),
                     info:
                       market?.fundingRate !== null && market?.fundingRate !== undefined
                         ? market.fundingRate >= 0
@@ -1003,7 +1003,7 @@ export default function RiskWhisperer() {
                     label: 'USDY Peg Deviation',
                     value:
                       marketLoading || market?.usdyPegDeviation === null
-                        ? '—'
+                        ? '-'
                         : `${market?.usdyPegDeviation}%`,
                     info:
                       market?.usdyPegDeviation !== null && market?.usdyPegDeviation !== undefined
@@ -1032,7 +1032,7 @@ export default function RiskWhisperer() {
                       marketLoading ||
                       market?.sentimentScore === null ||
                       market?.sentimentScore === undefined
-                        ? '—'
+                        ? '-'
                         : `${market?.sentimentScore >= 0 ? '+' : ''}${market?.sentimentScore}`,
                     info: marketLoading ? 'Loading...' : sentimentSub,
                     icon: (
@@ -1050,7 +1050,7 @@ export default function RiskWhisperer() {
                   },
                   {
                     label: 'Mantle TVL Change',
-                    value: marketLoading ? '—' : fmtPercent(market?.mantleTvlChange),
+                    value: marketLoading ? '-' : fmtPercent(market?.mantleTvlChange),
                     info:
                       market?.mantleTvlChange !== null && market?.mantleTvlChange !== undefined
                         ? market.mantleTvlChange >= 0
@@ -1464,7 +1464,7 @@ export default function RiskWhisperer() {
                       },
                       {
                         label: 'Wallet Value',
-                        value: asset.walletValue ?? (walletAddress ? 'â€”' : 'Not connected'),
+                        value: asset.walletValue ?? (walletAddress ? '-' : 'Not connected'),
                       },
                       { label: 'Category', value: asset.category },
                     ].map((row) => (

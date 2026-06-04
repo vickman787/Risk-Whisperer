@@ -21,10 +21,43 @@ function round(value: number | null, digits = 2): number | null {
   return value === null ? null : parseFloat(value.toFixed(digits));
 }
 
+function readMantleChainChange(chains: { name?: string; change_1d?: number }[]): number | null {
+  const mantle = chains.find((c) => c.name?.toLowerCase() === 'mantle');
+  return typeof mantle?.change_1d === 'number' ? mantle.change_1d : null;
+}
+
+function readMantleChartChange(chart: { totalLiquidityUSD?: number }[]): number | null {
+  if (chart.length < 2) return null;
+  const latest = chart[chart.length - 1]?.totalLiquidityUSD;
+  const previous = chart[chart.length - 2]?.totalLiquidityUSD;
+  if (!latest || !previous) return null;
+  return ((latest - previous) / previous) * 100;
+}
+
+function readHyperliquidEthFunding(payload: unknown): number | null {
+  if (!Array.isArray(payload) || payload.length < 2) return null;
+  const universe = payload[0]?.universe;
+  const contexts = payload[1];
+  if (!Array.isArray(universe) || !Array.isArray(contexts)) return null;
+
+  const ethIndex = universe.findIndex((market) => market?.name === 'ETH');
+  const parsed = parseFloat(contexts[ethIndex]?.funding ?? '');
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export async function GET() {
   try {
-    const [priceRes, ethChartRes, methChartRes, usdyChartRes, llamaRes, fearRes, binanceRes] =
-      await Promise.allSettled([
+    const [
+      priceRes,
+      ethChartRes,
+      methChartRes,
+      usdyChartRes,
+      llamaChainsRes,
+      llamaMantleChartRes,
+      fearRes,
+      binanceRes,
+      hyperliquidRes,
+    ] = await Promise.allSettled([
         fetch(`https://coins.llama.fi/prices/current/${ETH_KEY},${METH_KEY},${USDY_KEY}`, {
           next: { revalidate: 60 },
         }),
@@ -38,8 +71,15 @@ export async function GET() {
           next: { revalidate: 60 },
         }),
         fetch('https://api.llama.fi/v2/chains', { next: { revalidate: 120 } }),
+        fetch('https://api.llama.fi/charts/Mantle', { next: { revalidate: 120 } }),
         fetch('https://api.alternative.me/fng/?limit=1', { next: { revalidate: 300 } }),
         fetch('https://fapi.binance.com/fapi/v1/fundingRate?symbol=ETHUSDT&limit=1', {
+          next: { revalidate: 60 },
+        }),
+        fetch('https://api.hyperliquid.xyz/info', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'metaAndAssetCtxs' }),
           next: { revalidate: 60 },
         }),
       ]);
@@ -61,10 +101,15 @@ export async function GET() {
     const usdyChange = await readChartChange(usdyChartRes, USDY_KEY);
 
     let mantleTvlChange: number | null = null;
-    if (llamaRes.status === 'fulfilled' && llamaRes.value.ok) {
-      const chains: { name: string; change_1d?: number }[] = await llamaRes.value.json();
-      const mantle = chains.find((c) => c.name?.toLowerCase() === 'mantle');
-      mantleTvlChange = mantle?.change_1d ?? null;
+    if (llamaChainsRes.status === 'fulfilled' && llamaChainsRes.value.ok) {
+      mantleTvlChange = readMantleChainChange(await llamaChainsRes.value.json());
+    }
+    if (
+      mantleTvlChange === null &&
+      llamaMantleChartRes.status === 'fulfilled' &&
+      llamaMantleChartRes.value.ok
+    ) {
+      mantleTvlChange = readMantleChartChange(await llamaMantleChartRes.value.json());
     }
 
     let sentimentRaw: number | null = null;
@@ -83,6 +128,9 @@ export async function GET() {
       const funding = await binanceRes.value.json();
       const parsed = parseFloat(funding?.[0]?.fundingRate ?? '');
       fundingRate = Number.isFinite(parsed) ? parsed : null;
+    }
+    if (fundingRate === null && hyperliquidRes.status === 'fulfilled' && hyperliquidRes.value.ok) {
+      fundingRate = readHyperliquidEthFunding(await hyperliquidRes.value.json());
     }
 
     const usdyPegDeviation =

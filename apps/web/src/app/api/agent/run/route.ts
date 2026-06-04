@@ -2,16 +2,17 @@ import sql from '@/app/api/utils/sql';
 import { ensureOwnerColumns, getOrCreatePortfolio, getOwnerKey } from '@/app/api/utils/owner';
 
 type MarketSnapshot = {
-  ethPrice: number;
-  ethChange: number;
-  methPrice: number;
-  usdyPrice: number;
-  usdyChange: number;
-  usdyPegDeviation: number;
-  mantleTvlChange: number;
-  sentimentScore: number;
-  sentimentLabel: string;
-  fundingRate: number;
+  ethPrice: number | null;
+  ethChange: number | null;
+  methPrice: number | null;
+  methChange: number | null;
+  usdyPrice: number | null;
+  usdyChange: number | null;
+  usdyPegDeviation: number | null;
+  mantleTvlChange: number | null;
+  sentimentScore: number | null;
+  sentimentLabel: string | null;
+  fundingRate: number | null;
   fetchedAt: string;
 };
 
@@ -60,8 +61,19 @@ function generateTxHash(): string {
   return `0x${full.slice(0, 4)}...${full.slice(6)}`;
 }
 
-function formatPct(value: number): string {
+function formatPct(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return 'unavailable';
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
+}
+
+function formatUsd(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return 'unavailable';
+  return `$${value.toLocaleString(undefined, { maximumFractionDigits: digits })}`;
+}
+
+function signalFromChange(value: number | null | undefined): ResearchSource['signal'] {
+  if (value === null || value === undefined || !Number.isFinite(value)) return 'Neutral';
+  return value > 1 ? 'Bullish' : value < -1 ? 'Bearish' : 'Neutral';
 }
 
 function toNumber(value: unknown): number {
@@ -102,48 +114,74 @@ function buildResearchDossier(
   portfolio: PortfolioState,
   recentContext: string
 ) {
-  const usdyPegBps = market.usdyPegDeviation * 10_000;
+  const usdyPegBps =
+    market.usdyPegDeviation === null || market.usdyPegDeviation === undefined
+      ? null
+      : market.usdyPegDeviation * 10_000;
   const sources: ResearchSource[] = [
     {
       label: 'DeFiLlama token prices',
       category: 'Price',
       url: 'https://coins.llama.fi/prices/current/coingecko:ethereum,mantle:0xcDA86A272531e8640cD7F1a92c01839911B90bb0,mantle:0x5bE26527e817998A7206475496fDE1E68957c5A6',
-      summary: `ETH is $${market.ethPrice.toLocaleString()} (${formatPct(market.ethChange)} 24h), mETH is $${market.methPrice.toLocaleString()}, and USDY is $${market.usdyPrice.toFixed(4)}.`,
-      signal: market.ethChange > 2 ? 'Bullish' : market.ethChange < -2 ? 'Bearish' : 'Neutral',
+      summary: `ETH is ${formatUsd(market.ethPrice)} (${formatPct(market.ethChange)} 24h), mETH is ${formatUsd(market.methPrice)}, and USDY is ${formatUsd(market.usdyPrice, 4)}.`,
+      signal: signalFromChange(market.ethChange),
     },
     {
       label: 'USDY peg monitor',
       category: 'Peg',
       url: 'https://coins.llama.fi/prices/current/mantle:0x5bE26527e817998A7206475496fDE1E68957c5A6',
-      summary: `USDY is ${usdyPegBps.toFixed(1)} bps away from $1.00; emergency hold threshold is 50 bps.`,
-      signal: market.usdyPegDeviation > 0.005 ? 'Risk' : 'Neutral',
+      summary:
+        usdyPegBps === null
+          ? 'USDY peg data is unavailable from the live price feed.'
+          : `USDY is ${usdyPegBps.toFixed(1)} bps away from $1.00; emergency hold threshold is 50 bps.`,
+      signal:
+        market.usdyPegDeviation !== null &&
+        market.usdyPegDeviation !== undefined &&
+        market.usdyPegDeviation > 0.005
+          ? 'Risk'
+          : 'Neutral',
     },
     {
       label: 'DeFiLlama Mantle TVL',
       category: 'Liquidity',
-      url: 'https://api.llama.fi/v2/chains',
+      url: 'https://api.llama.fi/v2/chains and https://api.llama.fi/charts/Mantle',
       summary: `Mantle TVL changed ${formatPct(market.mantleTvlChange)} over 24h, a proxy for chain liquidity pressure.`,
-      signal:
-        market.mantleTvlChange > 1 ? 'Bullish' : market.mantleTvlChange < -1 ? 'Bearish' : 'Neutral',
+      signal: signalFromChange(market.mantleTvlChange),
     },
     {
       label: 'Alternative.me Fear and Greed',
       category: 'Sentiment',
       url: 'https://api.alternative.me/fng/?limit=1',
-      summary: `Crypto sentiment is ${market.sentimentLabel} (${Math.round((market.sentimentScore + 1) * 50)}/100).`,
+      summary:
+        market.sentimentScore === null || market.sentimentScore === undefined
+          ? 'Crypto sentiment data is unavailable from the live sentiment feed.'
+          : `Crypto sentiment is ${market.sentimentLabel ?? 'unclassified'} (${Math.round((market.sentimentScore + 1) * 50)}/100).`,
       signal:
+        market.sentimentScore !== null &&
+        market.sentimentScore !== undefined &&
         market.sentimentScore > 0.25
           ? 'Bullish'
-          : market.sentimentScore < -0.25
+          : market.sentimentScore !== null &&
+              market.sentimentScore !== undefined &&
+              market.sentimentScore < -0.25
             ? 'Bearish'
             : 'Neutral',
     },
     {
-      label: 'Binance ETH perpetual funding',
+      label: 'ETH perpetual funding',
       category: 'Leverage',
-      url: 'https://fapi.binance.com/fapi/v1/fundingRate?symbol=ETHUSDT&limit=1',
+      url: 'https://fapi.binance.com/fapi/v1/fundingRate?symbol=ETHUSDT&limit=1 and https://api.hyperliquid.xyz/info',
       summary: `ETH perpetual funding is ${formatPct(market.fundingRate)}, showing current long/short leverage pressure.`,
-      signal: market.fundingRate > 0.03 ? 'Risk' : market.fundingRate < -0.01 ? 'Bearish' : 'Neutral',
+      signal:
+        market.fundingRate !== null &&
+        market.fundingRate !== undefined &&
+        market.fundingRate > 0.03
+          ? 'Risk'
+          : market.fundingRate !== null &&
+              market.fundingRate !== undefined &&
+              market.fundingRate < -0.01
+            ? 'Bearish'
+            : 'Neutral',
     },
     {
       label: 'Portfolio constraints and memory',
