@@ -572,7 +572,7 @@ export default function RiskWhisperer() {
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error ?? 'Agent run failed');
+        throw new Error(err.publicError ?? err.error ?? 'Agent run failed');
       }
       return res.json();
     },
@@ -580,7 +580,12 @@ export default function RiskWhisperer() {
       qc.invalidateQueries({ queryKey: ['decisions', ownerKey] });
       qc.invalidateQueries({ queryKey: ['market'] });
     },
-    onError: (err: Error) => setAgentError(err.message),
+    onError: (err: Error) =>
+      setAgentError(
+        err.message.includes('Failed to parse AI response')
+          ? 'Agent returned an invalid response. Please run it again.'
+          : err.message
+      ),
   });
 
   const { mutate: deleteDecision, isPending: decisionDeleting, variables: deletingDecisionId } =
