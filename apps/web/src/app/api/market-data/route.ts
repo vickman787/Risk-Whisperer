@@ -1,92 +1,105 @@
+const ETH_KEY = 'coingecko:ethereum';
+const METH_KEY = 'mantle:0xcDA86A272531e8640cD7F1a92c01839911B90bb0';
+const USDY_KEY = 'mantle:0x5bE26527e817998A7206475496fDE1E68957c5A6';
+
+async function readChartChange(
+  result: PromiseSettledResult<Response>,
+  key: string
+): Promise<number | null> {
+  if (result.status !== 'fulfilled' || !result.value.ok) return null;
+
+  const chart = await result.value.json();
+  const points = chart?.coins?.[key]?.prices ?? [];
+  const first = points[0]?.price;
+  const last = points[points.length - 1]?.price;
+
+  if (!first || !last) return null;
+  return ((last - first) / first) * 100;
+}
+
+function round(value: number | null, digits = 2): number | null {
+  return value === null ? null : parseFloat(value.toFixed(digits));
+}
+
 export async function GET() {
   try {
-    const [priceRes, ethChartRes, llamaRes, fearRes, binanceRes] = await Promise.allSettled([
-      // ETH, mETH, and USDY prices from DeFiLlama (free, no key)
-      fetch(
-        'https://coins.llama.fi/prices/current/coingecko:ethereum,mantle:0xcDA86A272531e8640cD7F1a92c01839911B90bb0,mantle:0x5bE26527e817998A7206475496fDE1E68957c5A6',
-        { next: { revalidate: 60 } }
-      ),
-      // ETH 24h change from DeFiLlama chart data
-      fetch('https://coins.llama.fi/chart/coingecko:ethereum?span=2&period=1d', {
-        next: { revalidate: 60 },
-      }),
-      // Mantle TVL from DeFiLlama (free, no key)
-      fetch('https://api.llama.fi/v2/chains', { next: { revalidate: 120 } }),
-      // Fear & Greed Index (free, no key)
-      fetch('https://api.alternative.me/fng/?limit=1', { next: { revalidate: 300 } }),
-      // ETH perpetual funding rate from Binance (free, no key)
-      fetch('https://fapi.binance.com/fapi/v1/fundingRate?symbol=ETHUSDT&limit=1', {
-        next: { revalidate: 60 },
-      }),
-    ]);
+    const [priceRes, ethChartRes, methChartRes, usdyChartRes, llamaRes, fearRes, binanceRes] =
+      await Promise.allSettled([
+        fetch(`https://coins.llama.fi/prices/current/${ETH_KEY},${METH_KEY},${USDY_KEY}`, {
+          next: { revalidate: 60 },
+        }),
+        fetch(`https://coins.llama.fi/chart/${ETH_KEY}?span=2&period=1d`, {
+          next: { revalidate: 60 },
+        }),
+        fetch(`https://coins.llama.fi/chart/${METH_KEY}?span=2&period=1d`, {
+          next: { revalidate: 60 },
+        }),
+        fetch(`https://coins.llama.fi/chart/${USDY_KEY}?span=2&period=1d`, {
+          next: { revalidate: 60 },
+        }),
+        fetch('https://api.llama.fi/v2/chains', { next: { revalidate: 120 } }),
+        fetch('https://api.alternative.me/fng/?limit=1', { next: { revalidate: 300 } }),
+        fetch('https://fapi.binance.com/fapi/v1/fundingRate?symbol=ETHUSDT&limit=1', {
+          next: { revalidate: 60 },
+        }),
+      ]);
 
-    // --- Prices ---
-    let ethPrice = 3218;
-    let ethChange = 0;
-    let methPrice = 3280;
-    let usdyPrice = 1.0004;
-    let usdyChange = 0.01;
+    let ethPrice: number | null = null;
+    let methPrice: number | null = null;
+    let usdyPrice: number | null = null;
 
     if (priceRes.status === 'fulfilled' && priceRes.value.ok) {
       const prices = await priceRes.value.json();
       const coins = prices?.coins ?? {};
-      ethPrice = coins['coingecko:ethereum']?.price ?? ethPrice;
-      methPrice =
-        coins['mantle:0xcDA86A272531e8640cD7F1a92c01839911B90bb0']?.price ?? methPrice;
-      usdyPrice =
-        coins['mantle:0x5bE26527e817998A7206475496fDE1E68957c5A6']?.price ?? usdyPrice;
+      ethPrice = coins[ETH_KEY]?.price ?? null;
+      methPrice = coins[METH_KEY]?.price ?? null;
+      usdyPrice = coins[USDY_KEY]?.price ?? null;
     }
 
-    if (ethChartRes.status === 'fulfilled' && ethChartRes.value.ok) {
-      const chart = await ethChartRes.value.json();
-      const points = chart?.coins?.['coingecko:ethereum']?.prices ?? [];
-      const first = points[0]?.price;
-      const last = points[points.length - 1]?.price;
-      if (first && last) {
-        ethChange = ((last - first) / first) * 100;
-      }
-    }
+    const ethChange = await readChartChange(ethChartRes, ETH_KEY);
+    const methChange = await readChartChange(methChartRes, METH_KEY);
+    const usdyChange = await readChartChange(usdyChartRes, USDY_KEY);
 
-    // --- Mantle TVL change ---
-    let mantleTvlChange = 0;
+    let mantleTvlChange: number | null = null;
     if (llamaRes.status === 'fulfilled' && llamaRes.value.ok) {
       const chains: { name: string; change_1d?: number }[] = await llamaRes.value.json();
       const mantle = chains.find((c) => c.name?.toLowerCase() === 'mantle');
-      mantleTvlChange = mantle?.change_1d ?? 0;
+      mantleTvlChange = mantle?.change_1d ?? null;
     }
 
-    // --- Fear & Greed (0-100 → remap to -1 to 1 sentiment) ---
-    let sentimentRaw = 50;
-    let sentimentLabel = 'Neutral';
+    let sentimentRaw: number | null = null;
+    let sentimentLabel: string | null = null;
     if (fearRes.status === 'fulfilled' && fearRes.value.ok) {
       const fear = await fearRes.value.json();
-      sentimentRaw = parseInt(fear?.data?.[0]?.value ?? '50', 10);
-      sentimentLabel = fear?.data?.[0]?.value_classification ?? 'Neutral';
+      const parsed = parseInt(fear?.data?.[0]?.value ?? '', 10);
+      sentimentRaw = Number.isFinite(parsed) ? parsed : null;
+      sentimentLabel = fear?.data?.[0]?.value_classification ?? null;
     }
-    // Remap 0-100 → -1 to +1
-    const sentimentScore = parseFloat(((sentimentRaw - 50) / 50).toFixed(2));
+    const sentimentScore =
+      sentimentRaw === null ? null : parseFloat(((sentimentRaw - 50) / 50).toFixed(2));
 
-    // --- ETH Funding Rate ---
-    let fundingRate = 0.00032;
+    let fundingRate: number | null = null;
     if (binanceRes.status === 'fulfilled' && binanceRes.value.ok) {
       const funding = await binanceRes.value.json();
-      fundingRate = parseFloat(funding?.[0]?.fundingRate ?? '0.00032');
+      const parsed = parseFloat(funding?.[0]?.fundingRate ?? '');
+      fundingRate = Number.isFinite(parsed) ? parsed : null;
     }
 
-    // USDY peg deviation (distance from $1.00)
-    const usdyPegDeviation = parseFloat(Math.abs(usdyPrice - 1.0).toFixed(4));
+    const usdyPegDeviation =
+      usdyPrice === null ? null : parseFloat(Math.abs(usdyPrice - 1.0).toFixed(4));
 
     return Response.json({
       ethPrice,
-      ethChange: parseFloat(ethChange.toFixed(2)),
+      ethChange: round(ethChange),
       methPrice,
+      methChange: round(methChange),
       usdyPrice,
-      usdyChange: parseFloat(usdyChange.toFixed(2)),
+      usdyChange: round(usdyChange),
       usdyPegDeviation,
-      mantleTvlChange: parseFloat(mantleTvlChange.toFixed(2)),
+      mantleTvlChange: round(mantleTvlChange),
       sentimentScore,
       sentimentLabel,
-      fundingRate: parseFloat((fundingRate * 100).toFixed(4)),
+      fundingRate: fundingRate === null ? null : parseFloat((fundingRate * 100).toFixed(4)),
       fetchedAt: new Date().toISOString(),
     });
   } catch (err) {

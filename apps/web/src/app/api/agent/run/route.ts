@@ -149,7 +149,7 @@ function buildResearchDossier(
       label: 'Portfolio constraints and memory',
       category: 'Portfolio',
       url: 'internal://portfolio-state-and-recent-decisions',
-      summary: `Portfolio is ${portfolio.meth_allocation}% mETH and ${portfolio.usdy_allocation}% USDY. Recent memory: ${recentContext}`,
+      summary: `No wallet allocation data is supplied to this server route. Recent memory: ${recentContext}`,
       signal: 'Neutral',
     },
   ];
@@ -160,7 +160,7 @@ function buildResearchDossier(
   return {
     generatedAt: new Date().toISOString(),
     objective:
-      'Autonomously research Mantle RWA portfolio risk before making a bounded allocation recommendation.',
+      'Autonomously research Mantle RWA risk before making an evidence-backed recommendation.',
     sources,
     riskHypotheses: risks.map((source) => `${source.category}: ${source.summary}`),
     opportunityHypotheses: opportunities.map((source) => `${source.category}: ${source.summary}`),
@@ -208,9 +208,9 @@ export async function POST(request: Request) {
       )
       .join('\n');
 
-    const systemPrompt = `You are Risk Whisperer - an autonomous AI research agent and risk manager for a DeFi portfolio focused on Mantle RWA assets. You manage two assets:
-- mETH (Mantle Staked Ether): currently ${portfolio.meth_allocation}% of portfolio. Medium risk, reference yield ~4.8% APY.
-- USDY (Ondo US Dollar Yield): currently ${portfolio.usdy_allocation}% of portfolio. Low risk, reference yield ~5.1% APY. Backed by US Treasuries.
+    const systemPrompt = `You are Risk Whisperer - an autonomous AI research agent for Mantle RWA assets. You monitor two assets:
+- mETH (Mantle Staked Ether).
+- USDY (Ondo US Dollar Yield).
 
 Your operating loop:
 1. Inspect every supplied source and separate evidence from speculation.
@@ -220,9 +220,8 @@ Your operating loop:
 5. Produce an auditable research trail with source names.
 
 Your rules:
-- mETH must stay between 40% and 75%
-- USDY must stay above 25%
-- Max single reallocation: 15%
+- Do not assume wallet balances or portfolio allocations unless they are explicitly provided
+- Do not recommend a reallocation amount when wallet balances are unavailable
 - Don't execute if confidence < 70%
 - 2-hour cooldown between trades (check recent decisions)
 - If USDY peg deviation > 0.5%, trigger emergency Hold
@@ -234,7 +233,7 @@ You must output ONLY valid JSON in this exact format, no extra text:
   "action": "Reallocate" | "Increase" | "Reduce" | "Hold",
   "from_asset": "mETH" | "USDY" | null,
   "to_asset": "mETH" | "USDY" | null,
-  "amount": "e.g. 2,500 USDY" | null,
+  "amount": null,
   "reallocation_pct": number between 0 and 15 (percentage of portfolio to move, 0 if Hold),
   "risk_score": number between 1 and 100,
   "confidence": number between 50 and 99,
@@ -247,10 +246,8 @@ You must output ONLY valid JSON in this exact format, no extra text:
     const userPrompt = `Research dossier:
 ${researchContext}
 
-Current portfolio:
-- mETH: ${portfolio.meth_allocation}%
-- USDY: ${portfolio.usdy_allocation}%
-- Total value: $${portfolio.total_value_usd}
+Wallet data:
+- Wallet balances are not supplied to this server route. Use only the research dossier and recent saved decisions.
 
 Recent decisions (for cooldown context):
 ${recentContext}
@@ -292,6 +289,13 @@ Autonomously research the evidence, then decide what to do. Output only the JSON
       decision = JSON.parse(jsonMatch[0]);
     } catch {
       throw new Error(`Failed to parse AI response: ${rawContent}`);
+    }
+
+    if (decision.action !== 'Hold') {
+      decision = forceHold(
+        decision,
+        'Skipped execution: connected wallet balances are not supplied to the agent route, so no allocation change can be verified.'
+      );
     }
 
     const latestTrade = recentDecisions.find(

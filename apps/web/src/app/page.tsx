@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 
 const LOGO_URL = 'https://raw.createusercontent.com/ef83fbea-b45f-4d4d-8f71-c23d5eb0a565/';
-const TABS = ['Overview', 'Risk Log', 'Assets', 'Agent Identity'];
+const TABS = ['Overview', 'Risk Log', 'Assets'];
 const THEME_STORAGE_KEY = 'risk-whisperer-theme';
 const OWNER_STORAGE_KEY = 'risk-whisperer-owner-key';
 const WALLET_CONNECTED_STORAGE_KEY = 'risk-whisperer-wallet-connected';
@@ -73,7 +73,7 @@ declare global {
   }
 }
 
-// Pure ISO string formatters — no new Date() so no hydration mismatch
+// Pure ISO string formatters â€” no new Date() so no hydration mismatch
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function fmtDate(iso: string): string {
@@ -98,6 +98,18 @@ function fmtTime(iso: string): string {
   const ampm = hour >= 12 ? 'PM' : 'AM';
   const hour12 = hour % 12 || 12;
   return `${hour12}:${minute} ${ampm}`;
+}
+
+function fmtCurrency(value: number | null | undefined, maxDecimals = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return 'â€”';
+  return `$${value.toLocaleString(undefined, { maximumFractionDigits: maxDecimals })}`;
+}
+
+function fmtPercent(value: number | null | undefined, maxDecimals = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return 'â€”';
+  return `${value >= 0 ? '+' : ''}${value.toLocaleString(undefined, {
+    maximumFractionDigits: maxDecimals,
+  })}%`;
 }
 
 function shortAddress(address: string): string {
@@ -248,16 +260,17 @@ interface Portfolio {
 }
 
 interface MarketData {
-  ethPrice: number;
-  ethChange: number;
-  methPrice: number;
-  usdyPrice: number;
-  usdyChange: number;
-  usdyPegDeviation: number;
-  mantleTvlChange: number;
-  sentimentScore: number;
-  sentimentLabel: string;
-  fundingRate: number;
+  ethPrice: number | null;
+  ethChange: number | null;
+  methPrice: number | null;
+  methChange: number | null;
+  usdyPrice: number | null;
+  usdyChange: number | null;
+  usdyPegDeviation: number | null;
+  mantleTvlChange: number | null;
+  sentimentScore: number | null;
+  sentimentLabel: string | null;
+  fundingRate: number | null;
   fetchedAt: string;
 }
 
@@ -610,28 +623,17 @@ export default function RiskWhisperer() {
       (d.status === 'Recommended' || d.status === 'Executed') &&
       d.created_at.slice(0, 10) === todayStr
   ).length;
-  const referenceMethApy = 4.8;
-  const referenceUsdyApy = 5.1;
-  const blendedApy = (
-    (portfolio.meth_allocation / 100) * referenceMethApy +
-    (portfolio.usdy_allocation / 100) * referenceUsdyApy
-  ).toFixed(2);
-
   const assets = [
     {
       symbol: 'mETH',
       name: 'Mantle Staked Ether',
-      allocation: portfolio.meth_allocation,
-      apy: `${referenceMethApy}%`,
-      risk: 'Medium',
-      riskColor: 'bg-yellow-500',
-      change: market ? `${market.ethChange >= 0 ? '+' : ''}${market.ethChange}%` : '—',
-      positive: market ? market.ethChange >= 0 : true,
-      price: market ? `$${market.methPrice.toLocaleString()}` : '—',
+      change: fmtPercent(market?.methChange),
+      positive: (market?.methChange ?? 0) >= 0,
+      price: fmtCurrency(market?.methPrice, 4),
       category: 'Staked ETH',
       walletBalance: walletBalances?.mETH.balance,
       walletValue:
-        walletBalances && market
+        walletBalances && market?.methPrice !== null && market?.methPrice !== undefined
           ? `$${(Number(walletBalances.mETH.balance) * market.methPrice).toLocaleString(
               undefined,
               { maximumFractionDigits: 2 }
@@ -641,17 +643,13 @@ export default function RiskWhisperer() {
     {
       symbol: 'USDY',
       name: 'Ondo US Dollar Yield',
-      allocation: portfolio.usdy_allocation,
-      apy: `${referenceUsdyApy}%`,
-      risk: 'Low',
-      riskColor: 'bg-green-500',
-      change: market ? `${market.usdyChange >= 0 ? '+' : ''}${market.usdyChange}%` : '—',
-      positive: market ? market.usdyChange >= 0 : true,
-      price: market ? `$${market.usdyPrice.toFixed(4)}` : '—',
+      change: fmtPercent(market?.usdyChange),
+      positive: (market?.usdyChange ?? 0) >= 0,
+      price: fmtCurrency(market?.usdyPrice, 4),
       category: 'RWA Stablecoin',
       walletBalance: walletBalances?.USDY.balance,
       walletValue:
-        walletBalances && market
+        walletBalances && market?.usdyPrice !== null && market?.usdyPrice !== undefined
           ? `$${(Number(walletBalances.USDY.balance) * market.usdyPrice).toLocaleString(
               undefined,
               { maximumFractionDigits: 2 }
@@ -663,12 +661,14 @@ export default function RiskWhisperer() {
   const riskLabel =
     latestRisk === undefined ? 'No data' : latestRisk < 40 ? 'Low' : latestRisk < 65 ? 'Moderate' : 'High';
   const sentimentSub = market
-    ? market.sentimentScore > 0.3
+    ? market.sentimentScore === null
+      ? 'No data'
+      : market.sentimentScore > 0.3
       ? 'Bullish'
       : market.sentimentScore < -0.3
         ? 'Bearish'
         : 'Neutral'
-    : '—';
+    : 'â€”';
 
   return (
     <div className={`min-h-screen ${bg} font-inter transition-colors duration-200`}>
@@ -786,7 +786,7 @@ export default function RiskWhisperer() {
         {agentError && (
           <div className="max-w-6xl mx-auto mt-2">
             <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-              ⚠ {agentError}
+              âš  {agentError}
             </p>
           </div>
         )}
@@ -796,7 +796,7 @@ export default function RiskWhisperer() {
         <div className="mb-8">
           <h1 className={`text-3xl font-semibold ${heading} tracking-tight`}>Risk Whisperer</h1>
           <p className={`${sub} text-sm mt-1`}>
-            Autonomous RWA risk manager — every recommendation logged with market context.
+            Autonomous RWA risk manager â€” every recommendation logged with market context.
           </p>
         </div>
 
@@ -823,7 +823,7 @@ export default function RiskWhisperer() {
                 >
                   <RingChart value={latestRisk ?? 0} size={64} color="#EA580C" dark={dark} />
                   <span className={`absolute text-xs font-semibold ${heading}`}>
-                    {latestRisk === undefined ? '—' : `${latestRisk}%`}
+                    {latestRisk === undefined ? 'â€”' : `${latestRisk}%`}
                   </span>
                 </div>
                 <div>
@@ -833,9 +833,9 @@ export default function RiskWhisperer() {
                     {latestRisk === undefined || prevRisk === undefined
                       ? 'Run agent to generate risk'
                       : latestRisk < prevRisk
-                        ? `↓ from ${prevRisk}%`
+                        ? `â†“ from ${prevRisk}%`
                         : latestRisk > prevRisk
-                          ? `↑ from ${prevRisk}%`
+                          ? `â†‘ from ${prevRisk}%`
                           : 'Unchanged'}
                   </p>
                 </div>
@@ -857,48 +857,28 @@ export default function RiskWhisperer() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className={`${card} rounded-xl border p-6 md:col-span-1`}>
-                <h2 className={`text-base font-semibold ${heading} mb-1`}>Asset Allocation</h2>
-                <p className={`text-sm ${sub} mb-5`}>AI-managed portfolio split</p>
+                <h2 className={`text-base font-semibold ${heading} mb-1`}>Tracked Assets</h2>
+                <p className={`text-sm ${sub} mb-5`}>Live market data and wallet readings only</p>
                 <div className="space-y-4">
                   {assets.map((asset) => (
-                    <div key={asset.symbol}>
-                      <div className="flex justify-between items-center mb-1.5">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-sm font-medium ${heading}`}>{asset.symbol}</span>
-                          <span className={`border rounded-full px-2 py-0.5 text-xs ${pillBg}`}>
-                            {asset.category}
-                          </span>
+                    <div key={asset.symbol} className={`border ${signalCard} rounded-xl p-4`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className={`text-sm font-semibold ${heading}`}>{asset.symbol}</p>
+                          <p className={`text-xs ${sub}`}>{asset.category}</p>
                         </div>
-                        <span className={`text-sm font-semibold ${heading}`}>
-                          {asset.allocation}%
-                        </span>
-                      </div>
-                      <div className={`h-1.5 ${barBg} rounded-full overflow-hidden`}>
-                        <div
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{
-                            width: `${asset.allocation}%`,
-                            backgroundColor: asset.symbol === 'mETH' ? '#2563EB' : '#10B981',
-                          }}
-                        />
-                      </div>
-                      <div className="flex justify-between mt-1">
-                        <span className={`text-xs ${sub}`}>Reference APY {asset.apy}</span>
                         <span
                           className={`text-xs ${asset.positive ? 'text-green-600' : 'text-red-500'}`}
                         >
                           {asset.change}
                         </span>
                       </div>
+                      <div className="mt-3 flex items-center justify-between gap-3">
+                        <span className={`text-xs ${sub}`}>Current price</span>
+                        <span className={`text-sm font-medium ${heading}`}>{asset.price}</span>
+                      </div>
                     </div>
                   ))}
-                </div>
-                <div className={`mt-6 pt-5 border-t ${innerDivider}`}>
-                  <p className={`text-xs ${sub} mb-2`}>Est. Blended APY</p>
-                  <p className={`text-xl font-semibold ${heading}`}>{blendedApy}%</p>
-                  <p className={`text-xs ${sub} mt-0.5`}>
-                    Based on the model allocation split
-                  </p>
                 </div>
               </div>
 
@@ -957,7 +937,7 @@ export default function RiskWhisperer() {
                             <span
                               className={`text-xs ${dark ? 'text-gray-500' : 'text-gray-400'} font-mono`}
                             >
-                              Sim {entry.tx_hash}
+                              Run #{entry.id}
                             </span>
                             <button
                               type="button"
@@ -997,36 +977,49 @@ export default function RiskWhisperer() {
                 {[
                   {
                     label: 'ETH Funding Rate',
-                    value: marketLoading
-                      ? '—'
-                      : `${(market?.fundingRate ?? 0) >= 0 ? '+' : ''}${market?.fundingRate ?? 0}%`,
-                    info: market
-                      ? (market.fundingRate ?? 0) >= 0
-                        ? 'Positive (bullish)'
-                        : 'Negative (bearish)'
-                      : 'Loading...',
+                    value: marketLoading ? '—' : fmtPercent(market?.fundingRate, 4),
+                    info:
+                      market?.fundingRate !== null && market?.fundingRate !== undefined
+                        ? market.fundingRate >= 0
+                          ? 'Positive (bullish)'
+                          : 'Negative (bearish)'
+                        : marketLoading
+                          ? 'Loading...'
+                          : 'No data',
                     icon: (
                       <TrendingUp
                         size={14}
                         className={
-                          market && market.fundingRate >= 0 ? 'text-green-500' : 'text-red-400'
+                          market?.fundingRate !== null &&
+                          market?.fundingRate !== undefined &&
+                          market.fundingRate >= 0
+                            ? 'text-green-500'
+                            : 'text-red-400'
                         }
                       />
                     ),
                   },
                   {
                     label: 'USDY Peg Deviation',
-                    value: marketLoading ? '—' : `${market?.usdyPegDeviation ?? 0}%`,
-                    info: market
-                      ? market.usdyPegDeviation < 0.5
-                        ? 'Healthy — no action'
-                        : '⚠ Warning'
-                      : 'Loading...',
+                    value:
+                      marketLoading || market?.usdyPegDeviation === null
+                        ? '—'
+                        : `${market?.usdyPegDeviation}%`,
+                    info:
+                      market?.usdyPegDeviation !== null && market?.usdyPegDeviation !== undefined
+                        ? market.usdyPegDeviation < 0.5
+                          ? 'Healthy - no action'
+                          : 'Warning'
+                        : marketLoading
+                          ? 'Loading...'
+                          : 'No data',
                     icon: (
                       <ShieldCheck
                         size={14}
                         className={
-                          market && market.usdyPegDeviation < 0.5
+                          market?.usdyPegDeviation !== null &&
+                          market?.usdyPegDeviation !== undefined &&
+                          market.usdyPegDeviation < 0.5
                             ? 'text-green-500'
                             : 'text-red-400'
                         }
@@ -1035,34 +1028,46 @@ export default function RiskWhisperer() {
                   },
                   {
                     label: 'Crypto Sentiment',
-                    value: marketLoading
-                      ? '—'
-                      : `${(market?.sentimentScore ?? 0) >= 0 ? '+' : ''}${market?.sentimentScore ?? 0}`,
+                    value:
+                      marketLoading ||
+                      market?.sentimentScore === null ||
+                      market?.sentimentScore === undefined
+                        ? '—'
+                        : `${market?.sentimentScore >= 0 ? '+' : ''}${market?.sentimentScore}`,
                     info: marketLoading ? 'Loading...' : sentimentSub,
                     icon: (
                       <Eye
                         size={14}
                         className={
-                          market && market.sentimentScore > 0 ? 'text-green-500' : 'text-orange-500'
+                          market?.sentimentScore !== null &&
+                          market?.sentimentScore !== undefined &&
+                          market.sentimentScore > 0
+                            ? 'text-green-500'
+                            : 'text-orange-500'
                         }
                       />
                     ),
                   },
                   {
                     label: 'Mantle TVL Change',
-                    value: marketLoading
-                      ? '—'
-                      : `${(market?.mantleTvlChange ?? 0) >= 0 ? '+' : ''}${market?.mantleTvlChange ?? 0}%`,
-                    info: market
-                      ? market.mantleTvlChange >= 0
-                        ? 'Ecosystem growing'
-                        : 'Contraction'
-                      : 'Loading...',
+                    value: marketLoading ? '—' : fmtPercent(market?.mantleTvlChange),
+                    info:
+                      market?.mantleTvlChange !== null && market?.mantleTvlChange !== undefined
+                        ? market.mantleTvlChange >= 0
+                          ? 'Ecosystem growing'
+                          : 'Contraction'
+                        : marketLoading
+                          ? 'Loading...'
+                          : 'No data',
                     icon: (
                       <Activity
                         size={14}
                         className={
-                          market && market.mantleTvlChange >= 0 ? 'text-blue-500' : 'text-red-400'
+                          market?.mantleTvlChange !== null &&
+                          market?.mantleTvlChange !== undefined &&
+                          market.mantleTvlChange >= 0
+                            ? 'text-blue-500'
+                            : 'text-red-400'
                         }
                       />
                     ),
@@ -1148,7 +1153,7 @@ export default function RiskWhisperer() {
                             <span
                               className={`font-mono text-xs ${dark ? 'text-gray-500' : 'text-gray-400'}`}
                             >
-                              Sim {entry.tx_hash}
+                              Run #{entry.id}
                             </span>
                           </div>
                         </div>
@@ -1434,19 +1439,11 @@ export default function RiskWhisperer() {
                 <div key={asset.symbol} className={`${card} rounded-xl border p-6`}>
                   <div className="flex items-start justify-between mb-5">
                     <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className={`text-lg font-semibold ${heading}`}>{asset.symbol}</h3>
-                        <span
-                          className={`border rounded-full px-3 py-1 text-xs inline-flex items-center gap-1.5 ${pillBg}`}
-                        >
-                          <span className={`w-1.5 h-1.5 rounded-full ${asset.riskColor}`} />
-                          {asset.risk} Risk
-                        </span>
-                      </div>
+                      <h3 className={`text-lg font-semibold ${heading} mb-1`}>{asset.symbol}</h3>
                       <p className={`text-sm ${sub}`}>{asset.name}</p>
                     </div>
                     <div className="text-right">
-                      <p className={`text-lg font-semibold ${heading}`}>{asset.allocation}%</p>
+                      <p className={`text-lg font-semibold ${heading}`}>{asset.price}</p>
                       <p
                         className={`text-sm ${asset.positive ? 'text-green-600' : 'text-red-500'}`}
                       >
@@ -1457,7 +1454,6 @@ export default function RiskWhisperer() {
                   <div className={`space-y-3 border-t ${innerDivider} pt-5`}>
                     {[
                       { label: 'Current Price', value: asset.price },
-                      { label: 'Portfolio Share', value: `${asset.allocation}%` },
                       {
                         label: 'Wallet Balance',
                         value: asset.walletBalance
@@ -1468,9 +1464,8 @@ export default function RiskWhisperer() {
                       },
                       {
                         label: 'Wallet Value',
-                        value: asset.walletValue ?? (walletAddress ? '—' : 'Not connected'),
+                        value: asset.walletValue ?? (walletAddress ? 'â€”' : 'Not connected'),
                       },
-                      { label: 'Reference APY', value: asset.apy },
                       { label: 'Category', value: asset.category },
                     ].map((row) => (
                       <div key={row.label} className="flex justify-between">
@@ -1479,216 +1474,12 @@ export default function RiskWhisperer() {
                       </div>
                     ))}
                   </div>
-                  <div className="mt-5">
-                    <div className="flex justify-between mb-1.5">
-                      <span className={`text-xs ${sub}`}>Portfolio weight</span>
-                      <span className={`text-xs font-medium ${heading}`}>{asset.allocation}%</span>
-                    </div>
-                    <div className={`h-1.5 ${barBg} rounded-full overflow-hidden`}>
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${asset.allocation}%`,
-                          backgroundColor: asset.symbol === 'mETH' ? '#2563EB' : '#10B981',
-                        }}
-                      />
-                    </div>
-                  </div>
                 </div>
               ))}
             </div>
-            <div className={`${card} rounded-xl border p-6`}>
-              <h2 className={`text-base font-semibold ${heading} mb-1`}>Agent Strategy Rules</h2>
-              <p className={`text-sm ${sub} mb-5`}>The guardrails the AI operates within</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-2">
-                {[
-                  'mETH allocation must stay between 40% and 75%',
-                  'USDY position must stay above 25% (safety floor)',
-                  'Maximum single reallocation: 15%',
-                  'Minimum confidence threshold to execute: 70%',
-                  'Recommendations are saved before any future contract execution',
-                  'Cooldown of 2 hours between consecutive trades',
-                  'USDY peg deviation above 0.5% triggers emergency hold',
-                  'mETH yield must be > 3.5% APY to maintain allocation',
-                ].map((rule) => (
-                  <div key={rule} className="flex items-start gap-2 py-1.5">
-                    <span className={`${sub} mt-0.5 shrink-0`}>-</span>
-                    <span className={`text-sm ${dark ? 'text-gray-300' : 'text-gray-600'}`}>
-                      {rule}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         )}
 
-        {/* AGENT IDENTITY */}
-        {activeTab === 'Agent Identity' && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className={`${card} rounded-xl border p-6 md:col-span-1`}>
-                <h2 className={`text-base font-semibold ${heading} mb-1`}>Planned ERC-8004 Identity</h2>
-                <p className={`text-sm ${sub} mb-5`}>Ready for future on-chain agent identity</p>
-                <div
-                  className={`aspect-square rounded-xl border flex flex-col items-center justify-center mb-5 relative overflow-hidden ${dark ? 'border-gray-700 bg-gradient-to-br from-blue-950 to-indigo-950' : 'border-gray-200 bg-gradient-to-br from-blue-50 to-indigo-100'}`}
-                >
-                  <div className="absolute inset-0 opacity-10">
-                    {Array.from({ length: 8 }).map((_, i) => (
-                      <div
-                        key={i}
-                        className="absolute rounded-full border border-blue-400"
-                        style={{
-                          width: `${(i + 1) * 40}px`,
-                          height: `${(i + 1) * 40}px`,
-                          top: '50%',
-                          left: '50%',
-                          transform: 'translate(-50%, -50%)',
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <img
-                    src={LOGO_URL}
-                    alt="Risk Whisperer"
-                    className="w-16 h-16 rounded-xl object-cover mb-3 relative z-10"
-                  />
-                  <p className={`text-sm font-semibold ${heading} relative z-10`}>
-                    RISK-WHISPERER-01
-                  </p>
-                  <p className={`text-xs ${sub} relative z-10 mt-0.5`}>Token ID pending</p>
-                </div>
-                <div className="space-y-3">
-                  {[
-                    { label: 'Standard', value: 'ERC-8004' },
-                    { label: 'Network', value: 'Mantle Mainnet' },
-                    { label: 'Token ID', value: 'Pending' },
-                    { label: 'Minted', value: 'Not minted' },
-                  ].map((row) => (
-                    <div key={row.label} className="flex justify-between items-center">
-                      <span className={`text-xs ${sub}`}>{row.label}</span>
-                      <span className={`border rounded-full px-3 py-1 text-xs ${pillBg}`}>
-                        {row.value}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="md:col-span-2 space-y-5">
-                <div className={`${card} rounded-xl border p-6`}>
-                  <h2 className={`text-base font-semibold ${heading} mb-1`}>Agent Reputation</h2>
-                  <p className={`text-sm ${sub} mb-5`}>
-                    Database-backed performance record for the AI strategy
-                  </p>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {[
-                      {
-                        label: 'Total Decisions',
-                        value: String(decisions.length),
-                        info: 'lifetime actions',
-                      },
-                      {
-                        label: 'Recommended Rate',
-                        value:
-                          decisions.length > 0
-                            ? `${Math.round((decisions.filter((d) => d.status === 'Recommended' || d.status === 'Executed').length / decisions.length) * 100)}%`
-                            : '—',
-                        info: 'decisions recommended',
-                      },
-                      {
-                        label: 'Risk Reductions',
-                        value: String(decisions.filter((d) => d.risk_after < d.risk_before).length),
-                        info: 'adverse moves avoided',
-                      },
-                      {
-                        label: 'Latest Risk',
-                        value: latestRisk === undefined ? '—' : `${latestRisk}%`,
-                        info: latestRisk === undefined ? 'no decision yet' : 'current risk score',
-                      },
-                      {
-                        label: 'Avg Confidence',
-                        value:
-                          decisions.length > 0
-                            ? `${Math.round(decisions.reduce((a, d) => a + d.confidence, 0) / decisions.length)}%`
-                            : '—',
-                        info: 'per decision',
-                      },
-                      {
-                        label: 'Actions Today',
-                        value: String(recommendedToday),
-                        info: "today's recommendations",
-                      },
-                    ].map((stat) => (
-                      <div key={stat.label} className={`border ${signalCard} rounded-xl p-4`}>
-                        <p className={`text-xs font-medium ${sub} mb-1`}>{stat.label}</p>
-                        <p className={`text-xl font-semibold ${heading}`}>{stat.value}</p>
-                        <p className={`text-xs ${sub} mt-0.5`}>{stat.info}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className={`${card} rounded-xl border p-6`}>
-                  <h2 className={`text-base font-semibold ${heading} mb-1`}>Agent Achievements</h2>
-                  <p className={`text-sm ${sub} mb-5`}>
-                    Milestones from saved agent decisions
-                  </p>
-                  <div className="space-y-2">
-                    {[
-                      {
-                        badge: '🛡️ First Shield',
-                        desc: 'First successful risk reduction recommended',
-                        unlocked: decisions.some((d) => d.risk_after < d.risk_before),
-                      },
-                      {
-                        badge: '⚡ Signal Master',
-                        desc: 'Made 10+ autonomous decisions',
-                        unlocked: decisions.length >= 10,
-                      },
-                      {
-                        badge: '🎯 Precision Agent',
-                        desc: 'Maintained 80%+ recommendation rate',
-                        unlocked:
-                          decisions.length > 0 &&
-                          decisions.filter((d) => d.status === 'Recommended' || d.status === 'Executed').length /
-                            decisions.length >=
-                            0.8,
-                      },
-                      {
-                        badge: '📡 Radical Transparency',
-                        desc: 'All reasoning logs saved and indexed in the app',
-                        unlocked: decisions.length > 0,
-                      },
-                    ].map((a) => (
-                      <div
-                        key={a.badge}
-                        className={`flex items-center gap-4 py-3 border-b ${innerDivider} last:border-0`}
-                      >
-                        <div
-                          className={`w-8 h-8 rounded-lg border flex items-center justify-center text-base shrink-0 ${dark ? 'bg-[#262626] border-gray-700' : 'bg-gray-50 border-gray-200'} ${!a.unlocked ? 'opacity-30 grayscale' : ''}`}
-                        >
-                          {a.badge.split(' ')[0]}
-                        </div>
-                        <div className={`flex-1 ${!a.unlocked ? 'opacity-40' : ''}`}>
-                          <p className={`text-sm font-medium ${heading}`}>
-                            {a.badge.split(' ').slice(1).join(' ')}
-                          </p>
-                          <p className={`text-xs ${sub}`}>{a.desc}</p>
-                        </div>
-                        <span
-                          className={`border rounded-full px-3 py-1 text-xs shrink-0 ${a.unlocked ? 'border-green-300 text-green-600 bg-green-50' : pillBg}`}
-                        >
-                          {a.unlocked ? 'Unlocked' : 'Locked'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Footer */}
@@ -1698,7 +1489,7 @@ export default function RiskWhisperer() {
             <img src={LOGO_URL} alt="Risk Whisperer" className="w-7 h-7 rounded-lg object-cover" />
             <div>
               <p className={`text-sm font-semibold ${heading}`}>Risk Whisperer</p>
-              <p className={`text-xs ${sub}`}>Built on Mantle · Turing Test Hackathon 2025</p>
+              <p className={`text-xs ${sub}`}>Mantle RWA risk monitor</p>
             </div>
           </div>
           <div className="flex items-center gap-5">
@@ -1710,14 +1501,8 @@ export default function RiskWhisperer() {
             >
               Mantle Explorer
             </a>
-            <a href="#" className={`text-xs ${sub} hover:underline`}>
-              ERC-8004 Standard
-            </a>
-            <a href="#" className={`text-xs ${sub} hover:underline`}>
-              Docs
-            </a>
           </div>
-          <p className={`text-xs ${sub}`}>© 2025 Risk Whisperer</p>
+          <p className={`text-xs ${sub}`}>Risk Whisperer</p>
         </div>
       </footer>
     </div>

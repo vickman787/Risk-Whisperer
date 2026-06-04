@@ -1,9 +1,9 @@
 CREATE TABLE IF NOT EXISTS portfolio_state (
   id SERIAL PRIMARY KEY,
   owner_key TEXT NOT NULL DEFAULT 'legacy:global',
-  meth_allocation NUMERIC NOT NULL DEFAULT 50,
-  usdy_allocation NUMERIC NOT NULL DEFAULT 50,
-  total_value_usd NUMERIC NOT NULL DEFAULT 10000,
+  meth_allocation NUMERIC NOT NULL DEFAULT 0,
+  usdy_allocation NUMERIC NOT NULL DEFAULT 0,
+  total_value_usd NUMERIC NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
