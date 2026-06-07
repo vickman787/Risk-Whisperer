@@ -80,6 +80,23 @@ function signalFromChange(value: number | null | undefined): ResearchSource['sig
   return value > 1 ? 'Bullish' : value < -1 ? 'Bearish' : 'Neutral';
 }
 
+function createUnavailableMarketSnapshot(): MarketSnapshot {
+  return {
+    ethPrice: null,
+    ethChange: null,
+    methPrice: null,
+    methChange: null,
+    usdyPrice: null,
+    usdyChange: null,
+    usdyPegDeviation: null,
+    mantleTvlChange: null,
+    sentimentScore: null,
+    sentimentLabel: null,
+    fundingRate: null,
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
 function toNumber(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -109,6 +126,13 @@ function forceHold(decision: AgentDecision, reason: string): AgentDecision {
     amount: null,
     reallocation_pct: 0,
     confidence: Math.min(decision.confidence, 69),
+    reasoning: `${reason} ${decision.reasoning}`,
+  };
+}
+
+function appendReason(decision: AgentDecision, reason: string): AgentDecision {
+  return {
+    ...decision,
     reasoning: `${reason} ${decision.reasoning}`,
   };
 }
@@ -320,12 +344,15 @@ export async function POST(request: Request) {
     await ensureOwnerColumns();
     const ownerKey = await getOwnerKey(request);
     const baseUrl = process.env.NEXT_PUBLIC_CREATE_APP_URL ?? new URL(request.url).origin;
-    const marketRes = await fetch(`${baseUrl}/api/market-data`);
-    if (!marketRes.ok) throw new Error('Failed to fetch market data');
-    const market = (await marketRes.json()) as MarketSnapshot;
-
-    if (!process.env.OPENROUTER_API_KEY) {
-      throw new Error('OPENROUTER_API_KEY is not set');
+    let market: MarketSnapshot;
+    try {
+      const marketRes = await fetch(`${baseUrl}/api/market-data`);
+      market = marketRes.ok
+        ? ((await marketRes.json()) as MarketSnapshot)
+        : createUnavailableMarketSnapshot();
+    } catch (err) {
+      console.warn('agent/run market data fallback:', err);
+      market = createUnavailableMarketSnapshot();
     }
 
     const portfolio = normalizePortfolio((await getOrCreatePortfolio(ownerKey)) as PortfolioState);
@@ -411,7 +438,7 @@ Autonomously research the evidence, then decide what to do. Output only the JSON
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.2,
-      max_tokens: 900,
+      max_tokens: 650,
       response_format: { type: 'json_object' },
     };
     const openRouterHeaders = {
@@ -421,38 +448,59 @@ Autonomously research the evidence, then decide what to do. Output only the JSON
       'X-Title': 'Risk Whisperer',
     };
 
-    let openRouterRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: openRouterHeaders,
-      body: JSON.stringify(openRouterBody),
-    });
+    let decision: AgentDecision;
+    let aiProviderStatus = 'ok';
 
-    if (!openRouterRes.ok) {
-      const errText = await openRouterRes.text();
-      if (errText.toLowerCase().includes('response_format')) {
-        const { response_format: _responseFormat, ...retryBody } = openRouterBody;
-        openRouterRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    if (!process.env.OPENROUTER_API_KEY) {
+      aiProviderStatus = 'missing_api_key';
+      decision = appendReason(
+        createFallbackDecision(researchDossier),
+        'Skipped AI provider call: OPENROUTER_API_KEY is not configured.'
+      );
+    } else {
+      try {
+        let openRouterRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: openRouterHeaders,
-          body: JSON.stringify(retryBody),
+          body: JSON.stringify(openRouterBody),
         });
-        if (openRouterRes.ok) {
-          // Continue with the retry response.
-        } else {
-          const retryErrText = await openRouterRes.text();
-          throw new Error(`OpenRouter error: ${retryErrText}`);
+
+        if (!openRouterRes.ok) {
+          const errText = await openRouterRes.text();
+          if (errText.toLowerCase().includes('response_format')) {
+            const { response_format: _responseFormat, ...retryBody } = openRouterBody;
+            openRouterRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+              method: 'POST',
+              headers: openRouterHeaders,
+              body: JSON.stringify(retryBody),
+            });
+            if (!openRouterRes.ok) {
+              const retryErrText = await openRouterRes.text();
+              throw new Error(`OpenRouter error: ${retryErrText}`);
+            }
+          } else {
+            throw new Error(`OpenRouter error: ${errText}`);
+          }
         }
-      } else {
-        throw new Error(`OpenRouter error: ${errText}`);
+
+        const openRouterData = await openRouterRes.json();
+        const rawContent = openRouterData.choices?.[0]?.message?.content ?? '';
+        const parsedDecision = extractJsonObject(rawContent);
+        decision = parsedDecision
+          ? normalizeDecision(parsedDecision, researchDossier)
+          : appendReason(
+              createFallbackDecision(researchDossier),
+              'Skipped AI provider decision: the model response was empty or not valid JSON.'
+            );
+      } catch (err) {
+        console.warn('agent/run AI provider fallback:', err);
+        aiProviderStatus = err instanceof Error ? err.message.slice(0, 240) : 'provider_error';
+        decision = appendReason(
+          createFallbackDecision(researchDossier),
+          'Skipped AI provider decision: the model provider was unavailable, so the deterministic fallback reviewed the research dossier.'
+        );
       }
     }
-
-    const openRouterData = await openRouterRes.json();
-    const rawContent = openRouterData.choices?.[0]?.message?.content ?? '';
-    const parsedDecision = extractJsonObject(rawContent);
-    let decision = parsedDecision
-      ? normalizeDecision(parsedDecision, researchDossier)
-      : createFallbackDecision(researchDossier);
 
     if (decision.action !== 'Hold') {
       decision = forceHold(
@@ -528,6 +576,7 @@ Autonomously research the evidence, then decide what to do. Output only the JSON
           market,
           research: researchDossier,
           ai: {
+            provider_status: aiProviderStatus,
             research_brief: decision.research_brief ?? '',
             key_findings: decision.key_findings ?? [],
             sources_used: decision.sources_used ?? [],
